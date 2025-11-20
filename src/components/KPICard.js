@@ -1,0 +1,6 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+export function KPICard({ title, value, icon, trend }) {
+    const trendColor = trend && trend > 0 ? 'text-green-600' : trend && trend < 0 ? 'text-red-500' : 'text-gray-500';
+    const trendIcon = trend && trend > 0 ? '↗' : trend && trend < 0 ? '↘' : '→';
+    return (_jsxs("div", { className: "space-y-4", children: [_jsxs("div", { className: "flex items-center justify-between", children: [_jsx("h3", { className: "text-sm font-semibold text-gray-600 uppercase tracking-wide", children: title }), icon && _jsx("div", { className: "opacity-80", children: icon })] }), _jsxs("div", { className: "space-y-2", children: [_jsxs("div", { className: "text-4xl font-bold text-gray-900", children: [value.toFixed(1), "%"] }), trend !== undefined && (_jsxs("div", { className: `flex items-center gap-1 text-sm font-medium ${trendColor}`, children: [_jsx("span", { className: "text-lg", children: trendIcon }), _jsxs("span", { children: [Math.abs(trend).toFixed(1), "% from last period"] })] }))] }), _jsx("div", { className: "w-full bg-gray-200 rounded-full h-2", children: _jsx("div", { className: "bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-500", style: { width: `${Math.min(value, 100)}%` } }) })] }));
+}
