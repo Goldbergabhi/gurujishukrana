@@ -5,6 +5,7 @@ export default defineConfig(async () => {
   const { default: react } = await import('@vitejs/plugin-react')
 
   return {
+    base: './',
     plugins: [react()],
   resolve: {
     extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
