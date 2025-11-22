@@ -4,6 +4,9 @@ import bodyParser from 'body-parser';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import { MongoClient, Db } from 'mongodb';
+import { initProducer, produceResponseEvent } from './kafka/producer';
+import { startConsumer } from './kafka/consumer';
+import { subscribeSSE, publishEvent } from './sse';
 
 dotenv.config();
 
@@ -12,15 +15,7 @@ app.use(bodyParser.json());
 
 const server = http.createServer(app);
 
-// Simple in-memory SSE client registry
-type SSEClient = {
-  id: string;
-  companyId?: string;
-  surveyId?: string;
-  res: express.Response;
-};
-
-const sseClients = new Map<string, SSEClient[]>();
+// SSE client registry and publish helpers moved to `sse.ts`
 
 // MongoDB setup
 const MONGODB_URI = process.env.MONGODB_URI || process.env.VITE_MONGODB_URI || 'mongodb://localhost:27017';
@@ -50,65 +45,10 @@ function jwtAuthRequired(req: express.Request, res: express.Response, next: expr
   }
 }
 
-// SSE subscribe endpoint
-app.get('/sse', (req, res) => {
-  // Allow token in query or Authorization header
-  const token = (req.query.token as string) || (req.headers.authorization && String(req.headers.authorization).startsWith('Bearer ') ? String(req.headers.authorization).split(' ')[1] : undefined);
-  let companyId: string | undefined = undefined;
-  let surveyId: string | undefined = undefined;
-  if (token) {
-    try {
-      const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') as any;
-      companyId = String(payload.companyId);
-    } catch (err) {
-      // ignore, allow anonymous subscribe if companyId query param provided
-    }
-  }
-  if (!companyId && req.query.companyId) companyId = String(req.query.companyId);
-  if (req.query.surveyId) surveyId = String(req.query.surveyId);
+// SSE subscribe endpoint (logic in sse.ts)
+app.get('/sse', subscribeSSE);
 
-  // Set SSE headers
-  res.writeHead(200, {
-    Connection: 'keep-alive',
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'X-Accel-Buffering': 'no',
-    'Access-Control-Allow-Origin': '*',
-  });
-
-  res.flushHeaders?.();
-
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const client: SSEClient = { id, companyId, surveyId, res };
-  const key = companyId || '__all__';
-  const arr = sseClients.get(key) || [];
-  arr.push(client);
-  sseClients.set(key, arr);
-
-  // send a comment to keep connection alive
-  res.write(':connected\n\n');
-
-  req.on('close', () => {
-    const list = sseClients.get(key) || [];
-    sseClients.set(key, list.filter((c) => c.id !== id));
-  });
-});
-
-// helper to publish events to SSE clients
-function publishEvent(event: string, data: any) {
-  const companyKey = data.companyId ? String(data.companyId) : '__all__';
-  const targets = (sseClients.get(companyKey) || []).concat(sseClients.get('__all__') || []);
-  const text = `event: ${event}\n` + `data: ${JSON.stringify(data)}\n\n`;
-  targets.forEach((client) => {
-    try {
-      // if client subscribed to a specific survey, filter
-      if (client.surveyId && data.surveyId && String(client.surveyId) !== String(data.surveyId)) return;
-      client.res.write(text);
-    } catch (err) {
-      // ignore write errors
-    }
-  });
-}
+// publishEvent is implemented in sse.ts and imported above
 
 // API: submit a survey response
 app.post('/api/responses', jwtAuthRequired, async (req, res) => {
@@ -125,6 +65,13 @@ app.post('/api/responses', jwtAuthRequired, async (req, res) => {
 
     // publish to SSE clients
     publishEvent('response:created', { response: saved, companyId, surveyId });
+
+    // produce to Kafka (fire-and-forget)
+    try {
+      await produceResponseEvent(companyId, surveyId, saved);
+    } catch (err) {
+      console.error('Kafka produce error', err);
+    }
 
     return res.json({ ok: true, response: saved });
   } catch (err: any) {
@@ -156,6 +103,13 @@ const PORT = Number(process.env.PORT || 4000);
 
 async function start() {
   await connectMongo();
+  // initialize kafka producer and start consumer
+  try {
+    await initProducer();
+    startConsumer().catch((err) => console.error('Kafka consumer failed', err));
+  } catch (err) {
+    console.warn('Kafka not initialized:', err);
+  }
   if (process.env.NODE_ENV !== 'test') {
     server.listen(PORT, () => console.log(`SSE + Mongo server listening on ${PORT}`));
   }

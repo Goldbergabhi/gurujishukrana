@@ -14,6 +14,7 @@
 		"express": "^4.18.2",
 		"jsonwebtoken": "^9.0.2",
 		"mongodb": "^5.9.0",
+		"kafkajs": "^2.2.0",
 		"uuid": "^9.0.0"
 	},
 	"devDependencies": {
