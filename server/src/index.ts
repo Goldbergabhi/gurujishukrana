@@ -21,14 +21,49 @@ const server = http.createServer(app);
 const MONGODB_URI = process.env.MONGODB_URI || process.env.VITE_MONGODB_URI || 'mongodb://localhost:27017';
 const MONGODB_DB = process.env.MONGODB_DB || process.env.VITE_MONGODB_DATABASE || 'leap-survey';
 
-let mongoClient: MongoClient;
-let db: Db;
+let mongoClient: MongoClient | undefined;
+let db: any; // may be a real Db or an in-memory fallback for dev
+let useInMemoryDb = false;
 
 async function connectMongo() {
-  mongoClient = new MongoClient(MONGODB_URI, { connectTimeoutMS: 10000 });
-  await mongoClient.connect();
-  db = mongoClient.db(MONGODB_DB);
-  console.log('Connected to MongoDB', MONGODB_URI, 'db=', MONGODB_DB);
+  try {
+    mongoClient = new MongoClient(MONGODB_URI, { connectTimeoutMS: 10000 });
+    await mongoClient.connect();
+    db = mongoClient.db(MONGODB_DB);
+    console.log('Connected to MongoDB', MONGODB_URI, 'db=', MONGODB_DB);
+    useInMemoryDb = false;
+  } catch (err: any) {
+    // Fallback to a lightweight in-memory store for local dev/testing when Mongo isn't available
+    console.warn('Could not connect to MongoDB, falling back to in-memory DB for dev:', err && err.message ? err.message : err);
+    useInMemoryDb = true;
+    const store = new Map<string, any[]>();
+    const getCollection = (name: string) => {
+      if (!store.has(name)) store.set(name, []);
+      return {
+        insertOne: async (doc: any) => {
+          const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+          const saved = { _id: id, ...doc };
+          store.get(name)!.unshift(saved);
+          return { insertedId: id };
+        },
+        find: (query: any = {}) => {
+          const arr = store.get(name)!.slice();
+          const results = arr.filter((d) => {
+            for (const k of Object.keys(query)) {
+              if (d[k] !== query[k]) return false;
+            }
+            return true;
+          });
+          return {
+            sort: () => ({
+              limit: (n: number) => ({ toArray: async () => results.slice(0, n) })
+            })
+          };
+        }
+      };
+    };
+    db = { collection: (name: string) => getCollection(name) };
+  }
 }
 
 // Simple JWT auth middleware for API endpoints
