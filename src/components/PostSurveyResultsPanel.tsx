@@ -14,58 +14,68 @@ interface PostSurveyResultsPanelProps {
   campaign?: SurveyCampaign;
   surveyResponses: Record<string, string>;
   mockData: any;
+  backendAggregates?: any;
+  companyId?: string | null;
 }
-
-export function PostSurveyResultsPanel({ module, campaign, surveyResponses, mockData }: PostSurveyResultsPanelProps) {
-  // Mock question scores data
+export function PostSurveyResultsPanel({ module, campaign, surveyResponses, mockData, backendAggregates = null, companyId = null }: PostSurveyResultsPanelProps) {
+  // Prefer backend question scores when available
   const questionScores = useMemo(() => {
-    if (module === 'ai-readiness') {
-      return [
-        { question: 'Technology Infrastructure', positive: 78, neutral: 15, negative: 7 },
-        { question: 'Data Management', positive: 71, neutral: 22, negative: 7 },
-        { question: 'Skills & Training', positive: 69, neutral: 18, negative: 13 },
-        { question: 'Strategy & Culture', positive: 82, neutral: 12, negative: 6 }
-      ];
-    } else if (module === 'leadership') {
-      return [
-        { question: 'Strategic Vision', positive: 85, neutral: 10, negative: 5 },
-        { question: 'Team Development', positive: 79, neutral: 16, negative: 5 },
-        { question: 'Decision Making', positive: 73, neutral: 19, negative: 8 },
-        { question: 'Change Leadership', positive: 77, neutral: 15, negative: 8 }
-      ];
-    } else {
-      return [
-        { question: 'Work Environment', positive: 74, neutral: 18, negative: 8 },
-        { question: 'Career Growth', positive: 68, neutral: 22, negative: 10 },
-        { question: 'Recognition & Rewards', positive: 71, neutral: 20, negative: 9 },
-        { question: 'Work-Life Balance', positive: 76, neutral: 16, negative: 8 },
-        { question: 'Communication', positive: 69, neutral: 23, negative: 8 }
-      ];
-    }
-  }, [module]);
+    try {
+      const server = backendAggregates?.[module];
+      if (server && Array.isArray(server.questionScores) && server.questionScores.length > 0) {
+        return server.questionScores.map((q: any) => ({
+          id: q.questionId || q.id || q.question,
+          question: q.questionText || q.question || q.id || q.questionId,
+          positive: Math.round((q.positivePercentage || q.average || 0)),
+          neutral: Math.max(0, 100 - Math.round((q.positivePercentage || q.average || 0)) - 5),
+          negative: 5,
+          avg: typeof q.average === 'number' ? q.average : undefined,
+          avgDisplay: typeof q.average === 'number' ? `${q.average.toFixed(1)}%` : `${Math.round((q.positivePercentage || q.average || 0))}%`,
+          trend: Array.isArray(q.trend) ? q.trend.map((t: any) => ({ value: t.value || t.average || t.score || 0 })) : []
+        }));
+      }
+    } catch (e) {}
+    // No server data — return empty to avoid showing mock values
+    return [];
+  }, [module, backendAggregates]);
 
   // Mock demographic comparison data
-  const demographicScores = useMemo(() => [
-    { department: 'Engineering', score: 79 },
-    { department: 'Product', score: 82 },
-    { department: 'Design', score: 74 },
-    { department: 'Marketing', score: 77 },
-    { department: 'Sales', score: 71 }
-  ], []);
+  const demographicScores = useMemo(() => {
+    try {
+      const server = backendAggregates?.[module];
+      if (server && Array.isArray(server.demographics) && server.demographics.length > 0) {
+        return server.demographics.map((d: any) => ({ department: d.group || d.key || d.name || 'Group', score: Math.round(d.average || d.score || d.positivePercentage || 0) }));
+      }
+    } catch (e) {}
+    // no server data
+    return [];
+  }, [backendAggregates, module]);
 
-  // Mock trend data
-  const trendData = useMemo(() => [
-    { month: 'Jun', score: 72 },
-    { month: 'Jul', score: 74 },
-    { month: 'Aug', score: 71 },
-    { month: 'Sep', score: 76 },
-    { month: 'Oct', score: 78 }
-  ], []);
+  // Trend data: prefer server timeSeries when available
+  const trendData = useMemo(() => {
+    try {
+      const server = backendAggregates?.[module];
+      if (server && Array.isArray(server.timeSeries) && server.timeSeries.length > 0) {
+        return server.timeSeries.map((t: any) => ({ month: t.label || t.period || t.date || '', score: typeof t.average === 'number' ? t.average : (t.value || t.score || 0) }));
+      }
+    } catch (e) {}
+    // no server trend data
+    return [];
+  }, [backendAggregates, module]);
 
   // Questions flagged as needing attention (below 70%)
   const flaggedQuestions = questionScores.filter(q => q.positive < 70);
 
-  const modulePositiveAvg = questionScores.reduce((sum, q) => sum + q.positive, 0) / questionScores.length;
+  const modulePositiveAvg = useMemo(() => {
+    try {
+      const serverAvg = backendAggregates?.[module]?.summaryMetrics?.positiveAverage;
+      if (typeof serverAvg === 'number') return serverAvg;
+    } catch (e) {}
+    if (questionScores.length > 0) {
+      return questionScores.reduce((sum, q) => sum + (q.positive || 0), 0) / questionScores.length;
+    }
+    return null;
+  }, [questionScores, backendAggregates, module]);
 
   return (
     <Tabs defaultValue="my-responses" className="w-full">
@@ -106,7 +116,7 @@ export function PostSurveyResultsPanel({ module, campaign, surveyResponses, mock
         <CardContent>
           <div className="flex items-center gap-6">
             <div className="text-4xl font-bold text-blue-900">
-              {modulePositiveAvg.toFixed(1)}%
+              {modulePositiveAvg !== null ? `${modulePositiveAvg.toFixed(1)}%` : '—'}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-2">
@@ -115,17 +125,21 @@ export function PostSurveyResultsPanel({ module, campaign, surveyResponses, mock
                   +6% vs last cycle
                 </Badge>
               </div>
-              <ResponsiveContainer width="100%" height={60}>
-                <LineChart data={trendData}>
-                  <Line 
-                    type="monotone" 
-                    dataKey="score" 
-                    stroke="#3B82F6" 
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              {trendData && trendData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={60}>
+                  <LineChart data={trendData}>
+                    <Line 
+                      type="monotone" 
+                      dataKey="score" 
+                      stroke="#3B82F6" 
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-sm text-gray-500">Waiting for server trend data</div>
+              )}
             </div>
           </div>
         </CardContent>
@@ -142,39 +156,43 @@ export function PostSurveyResultsPanel({ module, campaign, surveyResponses, mock
             <CardDescription>Response distribution by section</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {questionScores.map((question, index) => (
-                <div key={index} className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-medium text-gray-900">
-                      {question.question}
-                    </span>
-                    <span className="text-sm font-bold text-green-600">
-                      {question.positive}%
-                    </span>
+            {questionScores.length > 0 ? (
+              <div className="space-y-4">
+                {questionScores.map((question, index) => (
+                  <div key={question.id || index} className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium text-gray-900">
+                        {question.question}
+                      </span>
+                      <span className="text-sm font-bold text-green-600">
+                        {question.positive}%
+                      </span>
+                    </div>
+                    <div className="flex h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-green-500 h-full"
+                        style={{ width: `${question.positive}%` }}
+                      />
+                      <div 
+                        className="bg-yellow-400 h-full"
+                        style={{ width: `${question.neutral}%` }}
+                      />
+                      <div 
+                        className="bg-red-500 h-full"
+                        style={{ width: `${question.negative}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-600">
+                      <span>Positive: {question.positive}%</span>
+                      <span>Neutral: {question.neutral}%</span>
+                      <span>Negative: {question.negative}%</span>
+                    </div>
                   </div>
-                  <div className="flex h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div 
-                      className="bg-green-500 h-full"
-                      style={{ width: `${question.positive}%` }}
-                    />
-                    <div 
-                      className="bg-yellow-400 h-full"
-                      style={{ width: `${question.neutral}%` }}
-                    />
-                    <div 
-                      className="bg-red-500 h-full"
-                      style={{ width: `${question.negative}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-600">
-                    <span>Positive: {question.positive}%</span>
-                    <span>Neutral: {question.neutral}%</span>
-                    <span>Negative: {question.negative}%</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-sm text-gray-600">Waiting for server question-level data for this module.</div>
+            )}
           </CardContent>
         </Card>
 
@@ -188,31 +206,35 @@ export function PostSurveyResultsPanel({ module, campaign, surveyResponses, mock
             <CardDescription>Performance comparison across departments</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={demographicScores} layout="horizontal">
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" domain={[0, 100]} fontSize={12} />
-                <YAxis 
-                  type="category" 
-                  dataKey="department" 
-                  fontSize={12}
-                  width={80}
-                />
-                <Tooltip 
-                  formatter={(value) => [`${value}%`, 'Score']}
-                  contentStyle={{
-                    backgroundColor: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px'
-                  }}
-                />
-                <Bar 
-                  dataKey="score" 
-                  fill="#8B5CF6"
-                  radius={[0, 4, 4, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            {demographicScores.length > 0 ? (
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={demographicScores} layout="horizontal">
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" domain={[0, 100]} fontSize={12} />
+                  <YAxis 
+                    type="category" 
+                    dataKey="department" 
+                    fontSize={12}
+                    width={80}
+                  />
+                  <Tooltip 
+                    formatter={(value) => [`${value}%`, 'Score']}
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                  <Bar 
+                    dataKey="score" 
+                    fill="#8B5CF6"
+                    radius={[0, 4, 4, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="p-6 text-sm text-gray-600">Waiting for server demographic scores for this module.</div>
+            )}
           </CardContent>
         </Card>
       </div>

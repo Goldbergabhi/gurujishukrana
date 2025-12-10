@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { SurveyQuestion } from './SurveyQuestion';
 import { aiReadinessQuestions, leadershipQuestions, employeeExperienceQuestions } from '../utils/surveyData';
+import { parseUrlParams } from '../utils/surveyManagement';
+import { API_BASE_URL } from '../config/database';
 
 interface ModularSurveyProps {
   onComplete: (responses: Record<string, string>) => void;
@@ -97,7 +99,8 @@ export function ModularSurvey({ onComplete, specificModule }: ModularSurveyProps
       
       // If this is a standalone survey (specificModule), complete immediately
       if (specificModule) {
-        onComplete(responses);
+        // submit responses to the server, then call onComplete
+        submitResponsesAndFinish();
       } else {
         setActiveModule(null);
         setCurrentView('overview');
@@ -112,9 +115,51 @@ export function ModularSurvey({ onComplete, specificModule }: ModularSurveyProps
       setCurrentView('complete');
     } else {
       // For standalone, this shouldn't be reached
-      onComplete(responses);
+      submitResponsesAndFinish();
     }
   };
+
+  // Submit responses to the server (uses dev token helper endpoint in development)
+  async function submitResponsesAndFinish() {
+    try {
+      const params = parseUrlParams();
+      const surveyId = params.surveyId || params.primaryModule || undefined;
+      // Determine companyId from URL params if present (companyId or company), otherwise fallback
+      const urlParams = new URLSearchParams(window.location.search);
+      const companyId = urlParams.get('companyId') || urlParams.get('company') || 'demo-company';
+
+      // Request a dev token (only available in non-production)
+      const devRoot = API_BASE_URL.replace(/\/api$/, '');
+      const tokRes = await fetch(`${devRoot}/api/dev-token?companyId=${encodeURIComponent(companyId)}`);
+      if (!tokRes.ok) {
+        console.warn('dev-token fetch failed', await tokRes.text());
+      }
+      const tokJson = tokRes.ok ? await tokRes.json() : null;
+      const token = tokJson?.token;
+      const body = { companyId, surveyId, respondentId: null, answers: responses };
+      const submitUrl = `${API_BASE_URL}/responses`;
+      const res = await fetch(submitUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        console.error('Failed to submit responses', res.status, txt);
+        // still call onComplete to let user proceed, but log error
+        onComplete(responses);
+        return;
+      }
+      // successful persist — call parent handler
+      onComplete(responses);
+    } catch (err) {
+      console.error('submitResponsesAndFinish error', err);
+      onComplete(responses);
+    }
+  }
 
   const handleNextQuestion = () => {
     const currentModule = modules.find(m => m.id === activeModule);

@@ -1,0 +1,11 @@
+nohup: ignoring input
+[INFO] 17:32:11 ts-node-dev ver. 2.0.0 (using ts-node ver. 10.9.2, typescript ver. 5.9.3)
+MONGODB_URI= [REDACTED]   MONGODB_DB= leap_survey
+Connected to MongoDB mongodb://127.0.0.1:27017 db= leap_survey
+Ensured DB indexes for aggregates and responses
+SSE + Mongo server listening on 4000
+[INFO] 17:56:03 Restarting: /workspaces/GuruJi/server/src/index.ts has been modified
+MONGODB_URI= [REDACTED]   MONGODB_DB= leap_survey
+Connected to MongoDB mongodb://127.0.0.1:27017 db= leap_survey
+Ensured DB indexes for aggregates and responses
+SSE + Mongo server listening on 4000

@@ -1,0 +1,39 @@
+nohup: ignoring input
+
+> LEAP Survey Dashboard@0.1.0 dev
+> vite
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+  VITE v5.4.21  ready in 371 ms
+
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: use --host to expose
+8:35:47 PM [vite] http proxy error: /sse
+AggregateError [EADDRNOTAVAIL]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:35:47 PM [vite] http proxy error: /sse
+AggregateError [EADDRNOTAVAIL]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:36:57 PM [vite] hmr update /src/App.tsx
+8:43:07 PM [vite] http proxy error: /sse
+AggregateError [EADDRNOTAVAIL]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:46:55 PM [vite] hmr update /src/App.tsx
+8:59:00 PM [vite] hmr update /src/App.tsx
+8:59:49 PM [vite] http proxy error: /sse
+AggregateError [EADDRNOTAVAIL]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:00:59 PM [vite] http proxy error: /sse
+AggregateError [EADDRNOTAVAIL]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:01:49 PM [vite] hmr update /src/App.tsx
+9:11:16 PM [vite] http proxy error: /sse
+AggregateError [EADDRNOTAVAIL]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)

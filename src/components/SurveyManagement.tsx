@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -13,10 +13,25 @@ import {
   generateSurveyUrls, 
   mockSurveyConfigs 
 } from "../utils/surveyManagement";
+import api from '../utils/api';
 import { toast } from "sonner@2.0.3";
 
 export function SurveyManagement() {
   const [surveys, setSurveys] = useState<SurveyConfig[]>(mockSurveyConfigs);
+
+  // Load persisted campaigns from server on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.campaigns.getAll();
+        if (res && Array.isArray(res)) {
+          setSurveys(res as any);
+        }
+      } catch (e) {
+        // ignore - fall back to mocks
+      }
+    })();
+  }, []);
   // Default to a neutral primary module (AI Readiness is not mandatory)
   const [newSurvey, setNewSurvey] = useState({
     companyName: '',
@@ -31,22 +46,40 @@ export function SurveyManagement() {
       return;
     }
 
-    const surveyConfig = createSurveyConfig(
-      newSurvey.companyName,
-      newSurvey.surveyType,
-      newSurvey.modules,
-      newSurvey.primaryModule
-    );
-
-    setSurveys([surveyConfig, ...surveys]);
-    setNewSurvey({
-      companyName: '',
-      surveyType: 'managers',
-      primaryModule: 'ai-readiness',
-      modules: ['ai-readiness']
-    });
-
-    toast.success(`Survey created for ${newSurvey.companyName}!`);
+    (async () => {
+      try {
+        const surveyConfig = createSurveyConfig(
+          newSurvey.companyName,
+          newSurvey.surveyType,
+          newSurvey.modules,
+          newSurvey.primaryModule
+        );
+        // Persist to backend campaigns collection
+        const res = await api.campaigns.create({
+          id: surveyConfig.id,
+          companyName: surveyConfig.companyName,
+          surveyType: surveyConfig.surveyType,
+          createdDate: surveyConfig.createdDate,
+          status: surveyConfig.status,
+          responseCount: surveyConfig.responseCount,
+          targetAudience: surveyConfig.targetAudience,
+          modules: surveyConfig.modules,
+          primaryModule: surveyConfig.primaryModule
+        } as any);
+        // update UI
+        setSurveys([surveyConfig, ...surveys]);
+        setNewSurvey({
+          companyName: '',
+          surveyType: 'managers',
+          primaryModule: 'ai-readiness',
+          modules: ['ai-readiness']
+        });
+        toast.success(`Survey created for ${newSurvey.companyName}!`);
+      } catch (err) {
+        console.error('Failed to create campaign', err);
+        toast.error('Failed to create survey; saved locally');
+      }
+    })();
   };
 
   const copyToClipboard = (text: string, label: string) => {

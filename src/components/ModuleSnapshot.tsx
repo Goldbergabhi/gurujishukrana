@@ -21,22 +21,22 @@ export function ModuleSnapshot({ module, campaign, surveyResponses, mockData, se
     const responseCount = getModuleResponses(module === 'ai-readiness' ? 'ai-' : 
                                           module === 'leadership' ? 'leadership-' : 'ee-');
 
-    // Prefer server-provided summary metrics when available
-    const positiveScore = serverSummary?.positiveAverage ?? (module === 'ai-readiness' ? 74.2 : module === 'leadership' ? 78.6 : 71.8);
-    const previousScore = serverSummary?.previousScore ?? (positiveScore - (module === 'ai-readiness' ? 2.3 : module === 'leadership' ? 1.8 : -0.5));
+    // Prefer server-provided summary metrics when available. If missing, return nulls so UI shows placeholders.
+    const positiveScore = typeof serverSummary?.positiveAverage === 'number' ? serverSummary.positiveAverage : null;
+    const previousScore = typeof serverSummary?.previousScore === 'number' ? serverSummary.previousScore : null;
 
     // Compute completionRate using server responseCount and campaign participantCount when available
-    let completionRate = campaign ? campaign.completionRate : 89;
+    let completionRate: number | null = null;
     if (serverSummary && typeof serverSummary.responseCount === 'number' && campaign && typeof campaign.participantCount === 'number' && campaign.participantCount > 0) {
       completionRate = Math.round((Number(serverSummary.responseCount) / Number(campaign.participantCount)) * 100);
     }
-    const medianScore = serverSummary?.medianQuestionScore ?? (positiveScore - 3.2);
-    const topDemographic = serverSummary?.topDemographic ? `${serverSummary.topDemographic.group} ${serverSummary.topDemographic.pct}%` : (module === 'ai-readiness' ? 'Engineering 89%' : module === 'leadership' ? 'Product Ops 87%' : 'Design Team 84%');
+    const medianScore = typeof serverSummary?.medianQuestionScore === 'number' ? serverSummary.medianQuestionScore : null;
+    const topDemographic = serverSummary?.topDemographic ? `${serverSummary.topDemographic.group} ${serverSummary.topDemographic.pct}%` : null;
 
     return {
       positiveScore,
       previousScore,
-      delta: positiveScore - previousScore,
+      delta: (positiveScore !== null && previousScore !== null) ? positiveScore - previousScore : null,
       completionRate,
       medianScore,
       topDemographic,
@@ -47,28 +47,28 @@ export function ModuleSnapshot({ module, campaign, surveyResponses, mockData, se
   const cards = [
     {
       title: "Average Positive Score",
-      value: `${moduleData.positiveScore.toFixed(1)}%`,
+      value: moduleData.positiveScore !== null ? `${moduleData.positiveScore.toFixed(1)}%` : '—',
       delta: moduleData.delta,
       icon: <Target className="h-5 w-5 text-blue-600" />,
       description: "Responses scoring 4-5 (or 7-10 for EX)"
     },
     {
       title: "Completion Rate",
-      value: `${moduleData.completionRate}%`,
-      delta: 12.3,
+      value: moduleData.completionRate !== null ? `${moduleData.completionRate}%` : '—',
+      delta: null,
       icon: <Users className="h-5 w-5 text-green-600" />,
-      description: `${campaign?.participantCount || 127} participants invited`
+      description: campaign?.participantCount ? `${campaign.participantCount} participants invited` : 'Participant count not available'
     },
     {
       title: "Median Question Score",
-      value: `${moduleData.medianScore.toFixed(1)}%`,
-      delta: 1.8,
+      value: moduleData.medianScore !== null ? `${moduleData.medianScore.toFixed(1)}%` : '—',
+      delta: null,
       icon: <Award className="h-5 w-5 text-purple-600" />,
       description: "Middle score across all questions"
     },
     {
       title: "Top Demographic",
-      value: moduleData.topDemographic,
+      value: moduleData.topDemographic || '—',
       delta: null,
       icon: <Clock className="h-5 w-5 text-orange-600" />,
       description: "Highest scoring group"

@@ -10,9 +10,11 @@ interface PostSurveyResponsesPanelProps {
   module: string;
   campaign?: SurveyCampaign;
   mockData: any;
+  backendAggregates?: any;
+  companyId?: string | null;
 }
 
-export function PostSurveyResponsesPanel({ module, campaign, mockData }: PostSurveyResponsesPanelProps) {
+export function PostSurveyResponsesPanel({ module, campaign, mockData, backendAggregates = null, companyId = null }: PostSurveyResponsesPanelProps) {
   // Mock data for daily responses
   const dailyResponsesData = useMemo(() => [
     { date: 'Oct 1', responses: 12 },
@@ -28,37 +30,49 @@ export function PostSurveyResponsesPanel({ module, campaign, mockData }: PostSur
   ], []);
 
   // Mock demographic distribution data
-  const demographicData = useMemo(() => [
-    { department: 'Engineering', responses: 45, color: '#3B82F6' },
-    { department: 'Product', responses: 32, color: '#10B981' },
-    { department: 'Design', responses: 18, color: '#F59E0B' },
-    { department: 'Marketing', responses: 24, color: '#EF4444' },
-    { department: 'Sales', responses: 16, color: '#8B5CF6' }
-  ], []);
+  const demographicData = useMemo(() => {
+    // Prefer any department breakdown provided by backend aggregates
+    try {
+      const server = backendAggregates?.[module];
+      if (server && server.demographics && Array.isArray(server.demographics)) {
+        return server.demographics.map((d: any) => ({ department: d.group || d.key || 'Other', responses: d.count || d.value || 0, color: '#3B82F6' }));
+      }
+    } catch (e) {}
+    return [
+      { department: 'Engineering', responses: 45, color: '#3B82F6' },
+      { department: 'Product', responses: 32, color: '#10B981' },
+      { department: 'Design', responses: 18, color: '#F59E0B' },
+      { department: 'Marketing', responses: 24, color: '#EF4444' },
+      { department: 'Sales', responses: 16, color: '#8B5CF6' }
+    ];
+  }, [backendAggregates, module]);
 
   const kpiData = [
     {
       title: "Total Participants",
-      value: campaign?.participantCount || 127,
+      value: campaign?.participantCount ?? (backendAggregates?.[module]?.summaryMetrics?.participantCount) ?? null,
       icon: <Users className="h-5 w-5 text-blue-600" />,
       description: "Invited to this survey"
     },
     {
       title: "Surveys Completed",
-      value: Math.round((campaign?.participantCount || 127) * (campaign?.completionRate || 89) / 100),
+      value: typeof backendAggregates?.[module]?.summaryMetrics?.responseCount === 'number'
+        ? Math.round(backendAggregates[module].summaryMetrics.responseCount)
+        : (campaign?.participantCount && typeof campaign.completionRate === 'number'
+            ? Math.round((campaign.participantCount * campaign.completionRate) / 100)
+            : null),
       icon: <FileText className="h-5 w-5 text-green-600" />,
       description: "Successfully submitted"
     },
     {
       title: "Active Respondents",
-      value: 12,
+      value: backendAggregates?.[module]?.summaryMetrics?.activeRespondents ?? null,
       icon: <Activity className="h-5 w-5 text-orange-600" />,
       description: "Currently in progress"
     },
     {
       title: "Avg Time to Complete",
-      value: module === 'ai-readiness' ? '8.2 min' : 
-             module === 'leadership' ? '11.4 min' : '13.7 min',
+      value: null,
       icon: <Clock className="h-5 w-5 text-purple-600" />,
       description: "Average completion time"
     }
@@ -120,7 +134,7 @@ export function PostSurveyResponsesPanel({ module, campaign, mockData }: PostSur
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-gray-900">
-                {typeof kpi.value === 'number' ? kpi.value.toLocaleString() : kpi.value}
+                {typeof kpi.value === 'number' ? kpi.value.toLocaleString() : (kpi.value ?? '—')}
               </div>
               <p className="text-xs text-gray-600 mt-1">
                 {kpi.description}
@@ -133,95 +147,111 @@ export function PostSurveyResponsesPanel({ module, campaign, mockData }: PostSur
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Daily Responses Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Daily Responses</CardTitle>
-            <CardDescription>Response activity over the survey period</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={dailyResponsesData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="date" 
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis 
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip 
-                  contentStyle={{
-                    backgroundColor: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px'
-                  }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="responses" 
-                  stroke="#3B82F6" 
-                  strokeWidth={2}
-                  dot={{ fill: '#3B82F6', strokeWidth: 2, r: 4 }}
-                  activeDot={{ r: 6 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        {backendAggregates && backendAggregates[module] ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Daily Responses</CardTitle>
+              <CardDescription>Response activity over the survey period</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={dailyResponsesData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="date" 
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis 
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="responses" 
+                    stroke="#3B82F6" 
+                    strokeWidth={2}
+                    dot={{ fill: '#3B82F6', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent>
+              <div className="p-6 text-sm text-gray-600">Waiting for server data to render daily response trends for this survey.</div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Response Distribution by Department */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Response Distribution by Department</CardTitle>
-            <CardDescription>Participation across organizational units</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={demographicData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="department" 
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis 
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip 
-                  contentStyle={{
-                    backgroundColor: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px'
-                  }}
-                />
-                <Bar 
-                  dataKey="responses" 
-                  fill="#3B82F6"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-            
-            <div className="flex flex-wrap gap-2 mt-4 justify-center">
-              {demographicData.map((item) => (
-                <Badge key={item.department} variant="outline" className="text-xs">
-                  <div 
-                    className="w-2 h-2 rounded-full mr-1" 
-                    style={{ backgroundColor: item.color }}
+        {backendAggregates && backendAggregates[module] ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Response Distribution by Department</CardTitle>
+              <CardDescription>Participation across organizational units</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={demographicData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="department" 
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
                   />
-                  {item.department} ({item.responses})
-                </Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                  <YAxis 
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                  <Bar 
+                    dataKey="responses" 
+                    fill="#3B82F6"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+              
+              <div className="flex flex-wrap gap-2 mt-4 justify-center">
+                {demographicData.map((item) => (
+                  <Badge key={item.department} variant="outline" className="text-xs">
+                    <div 
+                      className="w-2 h-2 rounded-full mr-1" 
+                      style={{ backgroundColor: item.color }}
+                    />
+                    {item.department} ({item.responses})
+                  </Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent>
+              <div className="p-6 text-sm text-gray-600">Waiting for server demographics to render distribution for this survey.</div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

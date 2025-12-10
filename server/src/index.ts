@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import bodyParser from 'body-parser';
+import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import { MongoClient, Db } from 'mongodb';
@@ -16,6 +17,8 @@ dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
+// Allow cross-origin requests in development; tighten this in production
+app.use(cors());
 
 const server = http.createServer(app);
 
@@ -24,6 +27,9 @@ const server = http.createServer(app);
 // MongoDB setup
 const MONGODB_URI = process.env.MONGODB_URI || process.env.VITE_MONGODB_URI || 'mongodb://localhost:27017';
 const MONGODB_DB = process.env.MONGODB_DB || process.env.VITE_MONGODB_DATABASE || 'leap-survey';
+
+// Log DB config at startup to help debugging (remove or secure in production)
+console.log('MONGODB_URI=', MONGODB_URI ? '[REDACTED]' : null, '  MONGODB_DB=', MONGODB_DB);
 
 let mongoClient: MongoClient | undefined;
 let db: any; // may be a real Db or an in-memory fallback for dev
@@ -110,6 +116,35 @@ function adminRequired(req: express.Request, res: express.Response, next: expres
 app.get('/sse', subscribeSSE);
 
 // publishEvent is implemented in sse.ts and imported above
+
+// Debug endpoint (development only) - report whether connected to MongoDB and collection counts
+app.get('/api/debug/db', async (req, res) => {
+  try {
+    const info: any = { useInMemoryDb, dbName: MONGODB_DB };
+    if (!useInMemoryDb && db) {
+      try {
+        // list collections and counts
+        const cols = await db.listCollections().toArray();
+        const counts: Record<string, number> = {};
+        for (const c of cols) {
+          try {
+            counts[c.name] = await db.collection(c.name).countDocuments();
+          } catch (innerErr) {
+            counts[c.name] = -1;
+          }
+        }
+        info.collections = counts;
+      } catch (e) {
+        info.collectionsError = String(e?.message || e);
+      }
+    } else {
+      info.collections = useInMemoryDb ? 'in-memory-store (not persisted)' : 'db not initialized';
+    }
+    return res.json({ ok: true, info });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
 
 // API: submit a survey response
 app.post('/api/responses', jwtAuthRequired, async (req, res) => {
@@ -260,6 +295,21 @@ app.post('/api/responses', jwtAuthRequired, async (req, res) => {
   }
 });
 
+// Development helper: issue a short-lived dev JWT for a company (only when not in production)
+app.get('/api/dev-token', (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'dev token endpoint disabled in production' });
+  const { companyId, isAdmin } = req.query;
+  if (!companyId) return res.status(400).json({ error: 'companyId query parameter required' });
+  try {
+    const payload = { companyId: String(companyId), isAdmin: String(isAdmin) === 'true' };
+    const token = jwt.sign(payload, process.env.JWT_SECRET || 'dev_secret', { expiresIn: '7d' });
+    return res.json({ ok: true, token });
+  } catch (err: any) {
+    console.error('Failed to create dev token', err);
+    return res.status(500).json({ error: 'failed to create token' });
+  }
+});
+
 // API: fetch responses
 // Raw responses endpoint: restricted to admin users only. Company users should use /api/aggregates.
 app.get('/api/responses', jwtAuthRequired, adminRequired, async (req, res) => {
@@ -278,178 +328,28 @@ app.get('/api/responses', jwtAuthRequired, adminRequired, async (req, res) => {
 });
 
 // API: fetch aggregated metrics (company-level, no respondent PII)
-app.get('/api/aggregates', async (req, res) => {
-  try {
-    const { companyId, surveyId } = req.query;
-    // basic validation
-    if (!companyId && !surveyId) {
-      // allow admin/global aggregates when neither provided
-      console.warn('Requesting global aggregates (no companyId, no surveyId)');
-    }
-    const aggregatesColl = db.collection('aggregates');
-    const key: any = {};
-    if (companyId) key.companyId = String(companyId);
-    if (surveyId) key.surveyId = String(surveyId);
 
-    // Try to read from materialized aggregates first
-    let aggDoc: any = null;
-    try {
-      if (Object.keys(key).length > 0) {
-        aggDoc = await aggregatesColl.findOne(key as any);
-      }
-    } catch (e) {
-      console.warn('aggregates collection not available or read failed', e);
-    }
-
-    // Helper to build module shapes from question sums/counts
-    const buildModulesFromQuestionBuckets = (questionBuckets: Record<string, any>, responseCount: number) => {
-      const modules = {
-        'ai-readiness': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount, trend: 0 } },
-        'leadership': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount, trend: 0 } },
-        'employee-experience': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount, trend: 0 } }
-      } as any;
-      Object.entries(questionBuckets || {}).forEach(([qid, stats]: any) => {
-        const cnt = stats.count || 0;
-        const sum = stats.sum || 0;
-        if (cnt <= 0) return;
-        const avg = sum / cnt;
-        // Determine positive percentage using same heuristic as computed-on-read
-        const prefix = String(qid).split('-')[0];
-        const threshold = prefix === 'ee' || prefix === 'employee' ? 7 : 4;
-        const positivePct = Math.round(((Array.isArray(stats.positiveCount) ? (stats.positiveCount[0] || 0) : (stats.positiveCount || 0)) / cnt) * 100 * 10) / 10 || (avg >= threshold ? 100 : 0);
-        const q = { questionId: qid, average: avg, positivePercentage: positivePct };
-        if (qid.startsWith('ai-')) modules['ai-readiness'].questionScores.push(q);
-        else if (qid.startsWith('leadership-')) modules['leadership'].questionScores.push(q);
-        else if (qid.startsWith('ee-') || qid.startsWith('employee')) modules['employee-experience'].questionScores.push(q);
-      });
-
-      Object.keys(modules).forEach((modKey) => {
-        const qlist = modules[modKey].questionScores;
-        modules[modKey].summaryMetrics.totalQuestions = qlist.length;
-        if (qlist.length > 0) {
-          const avgPos = qlist.reduce((acc: number, q: any) => acc + (q.positivePercentage || 0), 0) / qlist.length;
-          modules[modKey].summaryMetrics.positiveAverage = Math.round((avgPos + Number.EPSILON) * 10) / 10;
-        } else modules[modKey].summaryMetrics.positiveAverage = 0;
-      });
-      return modules;
-    };
-
-    if (aggDoc) {
-      const modules = buildModulesFromQuestionBuckets(aggDoc.questions || {}, aggDoc.responseCount || 0);
-      // compute medianQuestionScore per module and attach topDemographic if possible
-      try {
-        // compute median from question averages
-        Object.keys(modules).forEach((modKey) => {
-          const qlist = modules[modKey].questionScores || [];
-          const avgs = qlist.map((q: any) => q.average).sort((a: number, b: number) => a - b);
-          let median = 0;
-          if (avgs.length > 0) {
-            const mid = Math.floor(avgs.length / 2);
-            median = avgs.length % 2 === 1 ? avgs[mid] : (avgs[mid - 1] + avgs[mid]) / 2;
-            median = Math.round((median + Number.EPSILON) * 10) / 10;
-          }
-          modules[modKey].summaryMetrics = modules[modKey].summaryMetrics || {};
-          modules[modKey].summaryMetrics.medianQuestionScore = median;
-        });
-
-        // Try to compute a topDemographic from recent responses (apply globally)
-        try {
-          const responsesColl = db.collection('responses');
-          const respDocs = await responsesColl.find(key).limit(1000).toArray();
-          const demCounts: Record<string, number> = {};
-          respDocs.forEach((d: any) => {
-            if (d.demographics && typeof d.demographics === 'object') {
-              Object.values(d.demographics).forEach((v: any) => {
-                if (!v) return;
-                const name = String(v);
-                demCounts[name] = (demCounts[name] || 0) + 1;
-              });
-            } else if (d.answers && typeof d.answers === 'object') {
-              Object.entries(d.answers).forEach(([k, v]: any) => {
-                if (k.startsWith('dem-') || k.startsWith('dept') || k.toLowerCase().includes('department') || k.toLowerCase().includes('team')) {
-                  if (!v) return;
-                  const name = String(v);
-                  demCounts[name] = (demCounts[name] || 0) + 1;
-                }
-              });
-            }
-          });
-          const entries = Object.entries(demCounts);
-          let topDemographic: any = null;
-          if (entries.length > 0) {
-            entries.sort((a, b) => b[1] - a[1]);
-            const [group, count] = entries[0];
-            topDemographic = { group, count, pct: (aggDoc.responseCount ? Math.round((count / aggDoc.responseCount) * 100) : 0) };
-          }
-          if (topDemographic) {
-            Object.keys(modules).forEach((modKey) => {
-              modules[modKey].summaryMetrics = modules[modKey].summaryMetrics || {};
-              modules[modKey].summaryMetrics.topDemographic = topDemographic;
-            });
-          }
-        } catch (demErr) {
-          console.warn('Could not compute topDemographic from responses', demErr);
-        }
-      } catch (e) {
-        console.warn('Failed to enrich modules with median/topDemographic', e);
-      }
-
-      return res.json({ ok: true, aggregates: modules });
-    }
-
-    // Fallback: compute from raw responses
-    const responses = db.collection('responses');
-    const q: any = {};
-    if (companyId) q.companyId = String(companyId);
-    if (surveyId) q.surveyId = String(surveyId);
-    const docs = await responses.find(q).sort({ createdAt: -1 }).limit(10000).toArray();
-
-    // Accumulate per-question stats
-    const questionStats: Record<string, { sum: number; count: number; positiveCount: number }> = {};
-    let totalRespondents = 0;
-    docs.forEach((doc: any) => {
-      if (doc.answers && typeof doc.answers === 'object') {
-        totalRespondents += 1;
-        Object.entries(doc.answers).forEach(([qid, rawVal]) => {
-          const val = typeof rawVal === 'number' ? rawVal : Number(rawVal);
-          if (!Number.isFinite(val)) return;
-          if (!questionStats[qid]) questionStats[qid] = { sum: 0, count: 0, positiveCount: 0 };
-          questionStats[qid].sum += val;
-          questionStats[qid].count += 1;
-          const prefix = String(qid).split('-')[0];
-          const threshold = prefix === 'ee' || prefix === 'employee' || prefix === 'ee' ? 7 : 4;
-          if (val >= threshold) questionStats[qid].positiveCount += 1;
-        });
-      } else if (doc.question && typeof doc.response !== 'undefined') {
-        const qid = doc.question;
-        const val = typeof doc.response === 'number' ? doc.response : Number(doc.response);
-        if (!Number.isFinite(val)) return;
-        if (!questionStats[qid]) questionStats[qid] = { sum: 0, count: 0, positiveCount: 0 };
-        questionStats[qid].sum += val;
-        questionStats[qid].count += 1;
-        const prefix = String(qid).split('-')[0];
-        const threshold = prefix === 'ee' || prefix === 'employee' ? 7 : 4;
-        if (val >= threshold) questionStats[qid].positiveCount += 1;
-      }
-    });
-
-    // Organize into modules
+// Shared helper: compute modules analytics from aggregates doc or raw responses
+async function computeAggregates(key: any, aggDoc?: any) {
+  // Helper to build module shapes from question sums/counts
+  const buildModulesFromQuestionBuckets = (questionBuckets: Record<string, any>, responseCount: number) => {
     const modules = {
-      'ai-readiness': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount: totalRespondents, trend: 0 } },
-      'leadership': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount: totalRespondents, trend: 0 } },
-      'employee-experience': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount: totalRespondents, trend: 0 } }
+      'ai-readiness': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount, trend: 0 } },
+      'leadership': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount, trend: 0 } },
+      'employee-experience': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount, trend: 0 } }
     } as any;
-
-    Object.entries(questionStats).forEach(([qid, stats]) => {
-      const avg = stats.sum / stats.count;
-      const positivePct = stats.count > 0 ? (stats.positiveCount / stats.count) * 100 : 0;
-      if (qid.startsWith('ai-')) {
-        modules['ai-readiness'].questionScores.push({ questionId: qid, average: avg, positivePercentage: Math.round(positivePct * 10) / 10 });
-      } else if (qid.startsWith('leadership-')) {
-        modules['leadership'].questionScores.push({ questionId: qid, average: avg, positivePercentage: Math.round(positivePct * 10) / 10 });
-      } else if (qid.startsWith('ee-') || qid.startsWith('employee') || qid.startsWith('ee')) {
-        modules['employee-experience'].questionScores.push({ questionId: qid, average: avg, positivePercentage: Math.round(positivePct * 10) / 10 });
-      }
+    Object.entries(questionBuckets || {}).forEach(([qid, stats]: any) => {
+      const cnt = stats.count || 0;
+      const sum = stats.sum || 0;
+      if (cnt <= 0) return;
+      const avg = sum / cnt;
+      const prefix = String(qid).split('-')[0];
+      const threshold = prefix === 'ee' || prefix === 'employee' ? 7 : 4;
+      const positivePct = Math.round(((Array.isArray(stats.positiveCount) ? (stats.positiveCount[0] || 0) : (stats.positiveCount || 0)) / cnt) * 100 * 10) / 10 || (avg >= threshold ? 100 : 0);
+      const q = { questionId: qid, average: avg, positivePercentage: positivePct };
+      if (qid.startsWith('ai-')) modules['ai-readiness'].questionScores.push(q);
+      else if (qid.startsWith('leadership-')) modules['leadership'].questionScores.push(q);
+      else if (qid.startsWith('ee-') || qid.startsWith('employee')) modules['employee-experience'].questionScores.push(q);
     });
 
     Object.keys(modules).forEach((modKey) => {
@@ -458,12 +358,15 @@ app.get('/api/aggregates', async (req, res) => {
       if (qlist.length > 0) {
         const avgPos = qlist.reduce((acc: number, q: any) => acc + (q.positivePercentage || 0), 0) / qlist.length;
         modules[modKey].summaryMetrics.positiveAverage = Math.round((avgPos + Number.EPSILON) * 10) / 10;
-      } else {
-        modules[modKey].summaryMetrics.positiveAverage = 0;
-      }
+      } else modules[modKey].summaryMetrics.positiveAverage = 0;
     });
+    return modules;
+  };
 
-    // Compute median per module and topDemographic from raw responses
+  // If materialized aggregates provided, use them
+  if (aggDoc) {
+    const modules = buildModulesFromQuestionBuckets(aggDoc.questions || {}, aggDoc.responseCount || 0);
+    // compute median per module and attach topDemographic if possible
     try {
       Object.keys(modules).forEach((modKey) => {
         const qlist = modules[modKey].questionScores || [];
@@ -478,37 +381,178 @@ app.get('/api/aggregates', async (req, res) => {
         modules[modKey].summaryMetrics.medianQuestionScore = median;
       });
 
-      // topDemographic calculation
-      const demCounts: Record<string, number> = {};
-      docs.forEach((d: any) => {
-        if (d.demographics && typeof d.demographics === 'object') {
-          Object.values(d.demographics).forEach((v: any) => {
-            if (!v) return;
-            demCounts[String(v)] = (demCounts[String(v)] || 0) + 1;
-          });
-        } else if (d.answers && typeof d.answers === 'object') {
-          Object.entries(d.answers).forEach(([k, v]: any) => {
-            if (k.startsWith('dem-') || k.startsWith('dept') || k.toLowerCase().includes('department') || k.toLowerCase().includes('team')) {
+      // attach topDemographic from recent responses
+      try {
+        const responsesColl = db.collection('responses');
+        const respDocs = await responsesColl.find(key).limit(1000).toArray();
+        const demCounts: Record<string, number> = {};
+        respDocs.forEach((d: any) => {
+          if (d.demographics && typeof d.demographics === 'object') {
+            Object.values(d.demographics).forEach((v: any) => {
               if (!v) return;
               demCounts[String(v)] = (demCounts[String(v)] || 0) + 1;
-            }
+            });
+          } else if (d.answers && typeof d.answers === 'object') {
+            Object.entries(d.answers).forEach(([k, v]: any) => {
+              if (k.startsWith('dem-') || k.startsWith('dept') || k.toLowerCase().includes('department') || k.toLowerCase().includes('team')) {
+                if (!v) return;
+                demCounts[String(v)] = (demCounts[String(v)] || 0) + 1;
+              }
+            });
+          }
+        });
+        const entries = Object.entries(demCounts);
+        let topDemographic: any = null;
+        if (entries.length > 0) {
+          entries.sort((a, b) => b[1] - a[1]);
+          const [group, count] = entries[0];
+          topDemographic = { group, count, pct: (aggDoc.responseCount ? Math.round((count / aggDoc.responseCount) * 100) : 0) };
+        }
+        if (topDemographic) {
+          Object.keys(modules).forEach((modKey) => {
+            modules[modKey].summaryMetrics = modules[modKey].summaryMetrics || {};
+            modules[modKey].summaryMetrics.topDemographic = topDemographic;
           });
         }
-      });
-      const demEntries = Object.entries(demCounts);
-      if (demEntries.length > 0) {
-        demEntries.sort((a, b) => b[1] - a[1]);
-        const [group, count] = demEntries[0];
-        const topDemographic = { group, count, pct: totalRespondents > 0 ? Math.round((count / totalRespondents) * 100) : 0 };
-        Object.keys(modules).forEach((modKey) => {
-          modules[modKey].summaryMetrics = modules[modKey].summaryMetrics || {};
-          modules[modKey].summaryMetrics.topDemographic = topDemographic;
-        });
+      } catch (demErr) {
+        console.warn('Could not compute topDemographic from responses', demErr);
       }
-    } catch (err2) {
-      console.warn('Failed to compute fallback median/topDemographic', err2);
+    } catch (e) {
+      console.warn('Failed to enrich modules with median/topDemographic', e);
     }
 
+    return modules;
+  }
+
+  // Otherwise compute from raw responses
+  const responses = db.collection('responses');
+  const q: any = {};
+  if (key.companyId) q.companyId = String(key.companyId);
+  if (key.surveyId) q.surveyId = String(key.surveyId);
+  const docs = await responses.find(q).sort({ createdAt: -1 }).limit(10000).toArray();
+
+  const questionStats: Record<string, { sum: number; count: number; positiveCount: number }> = {};
+  let totalRespondents = 0;
+  docs.forEach((doc: any) => {
+    if (doc.answers && typeof doc.answers === 'object') {
+      totalRespondents += 1;
+      Object.entries(doc.answers).forEach(([qid, rawVal]) => {
+        const val = typeof rawVal === 'number' ? rawVal : Number(rawVal);
+        if (!Number.isFinite(val)) return;
+        if (!questionStats[qid]) questionStats[qid] = { sum: 0, count: 0, positiveCount: 0 };
+        questionStats[qid].sum += val;
+        questionStats[qid].count += 1;
+        const prefix = String(qid).split('-')[0];
+        const threshold = prefix === 'ee' || prefix === 'employee' || prefix === 'ee' ? 7 : 4;
+        if (val >= threshold) questionStats[qid].positiveCount += 1;
+      });
+    } else if (doc.question && typeof doc.response !== 'undefined') {
+      const qid = doc.question;
+      const val = typeof doc.response === 'number' ? doc.response : Number(doc.response);
+      if (!Number.isFinite(val)) return;
+      if (!questionStats[qid]) questionStats[qid] = { sum: 0, count: 0, positiveCount: 0 };
+      questionStats[qid].sum += val;
+      questionStats[qid].count += 1;
+      const prefix = String(qid).split('-')[0];
+      const threshold = prefix === 'ee' || prefix === 'employee' ? 7 : 4;
+      if (val >= threshold) questionStats[qid].positiveCount += 1;
+    }
+  });
+
+  const modules = {
+    'ai-readiness': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount: totalRespondents, trend: 0 } },
+    'leadership': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount: totalRespondents, trend: 0 } },
+    'employee-experience': { questionScores: [], sectionData: [], summaryMetrics: { positiveAverage: 0, totalQuestions: 0, responseCount: totalRespondents, trend: 0 } }
+  } as any;
+
+  Object.entries(questionStats).forEach(([qid, stats]) => {
+    const avg = stats.sum / stats.count;
+    const positivePct = stats.count > 0 ? (stats.positiveCount / stats.count) * 100 : 0;
+    if (qid.startsWith('ai-')) {
+      modules['ai-readiness'].questionScores.push({ questionId: qid, average: avg, positivePercentage: Math.round(positivePct * 10) / 10 });
+    } else if (qid.startsWith('leadership-')) {
+      modules['leadership'].questionScores.push({ questionId: qid, average: avg, positivePercentage: Math.round(positivePct * 10) / 10 });
+    } else if (qid.startsWith('ee-') || qid.startsWith('employee') || qid.startsWith('ee')) {
+      modules['employee-experience'].questionScores.push({ questionId: qid, average: avg, positivePercentage: Math.round(positivePct * 10) / 10 });
+    }
+  });
+
+  Object.keys(modules).forEach((modKey) => {
+    const qlist = modules[modKey].questionScores;
+    modules[modKey].summaryMetrics.totalQuestions = qlist.length;
+    if (qlist.length > 0) {
+      const avgPos = qlist.reduce((acc: number, q: any) => acc + (q.positivePercentage || 0), 0) / qlist.length;
+      modules[modKey].summaryMetrics.positiveAverage = Math.round((avgPos + Number.EPSILON) * 10) / 10;
+    } else {
+      modules[modKey].summaryMetrics.positiveAverage = 0;
+    }
+  });
+
+  try {
+    Object.keys(modules).forEach((modKey) => {
+      const qlist = modules[modKey].questionScores || [];
+      const avgs = qlist.map((q: any) => q.average).sort((a: number, b: number) => a - b);
+      let median = 0;
+      if (avgs.length > 0) {
+        const mid = Math.floor(avgs.length / 2);
+        median = avgs.length % 2 === 1 ? avgs[mid] : (avgs[mid - 1] + avgs[mid]) / 2;
+        median = Math.round((median + Number.EPSILON) * 10) / 10;
+      }
+      modules[modKey].summaryMetrics = modules[modKey].summaryMetrics || {};
+      modules[modKey].summaryMetrics.medianQuestionScore = median;
+    });
+
+    const demCounts: Record<string, number> = {};
+    docs.forEach((d: any) => {
+      if (d.demographics && typeof d.demographics === 'object') {
+        Object.values(d.demographics).forEach((v: any) => {
+          if (!v) return;
+          demCounts[String(v)] = (demCounts[String(v)] || 0) + 1;
+        });
+      } else if (d.answers && typeof d.answers === 'object') {
+        Object.entries(d.answers).forEach(([k, v]: any) => {
+          if (k.startsWith('dem-') || k.startsWith('dept') || k.toLowerCase().includes('department') || k.toLowerCase().includes('team')) {
+            if (!v) return;
+            demCounts[String(v)] = (demCounts[String(v)] || 0) + 1;
+          }
+        });
+      }
+    });
+    const demEntries = Object.entries(demCounts);
+    if (demEntries.length > 0) {
+      demEntries.sort((a, b) => b[1] - a[1]);
+      const [group, count] = demEntries[0];
+      const topDemographic = { group, count, pct: totalRespondents > 0 ? Math.round((count / totalRespondents) * 100) : 0 };
+      Object.keys(modules).forEach((modKey) => {
+        modules[modKey].summaryMetrics = modules[modKey].summaryMetrics || {};
+        modules[modKey].summaryMetrics.topDemographic = topDemographic;
+      });
+    }
+  } catch (err2) {
+    console.warn('Failed to compute fallback median/topDemographic', err2);
+  }
+
+  return modules;
+}
+
+app.get('/api/aggregates', async (req, res) => {
+  try {
+    const { companyId, surveyId } = req.query;
+    const key: any = {};
+    if (companyId) key.companyId = String(companyId);
+    if (surveyId) key.surveyId = String(surveyId);
+
+    const aggregatesColl = db.collection('aggregates');
+    let aggDoc: any = null;
+    try {
+      if (Object.keys(key).length > 0) {
+        aggDoc = await aggregatesColl.findOne(key as any);
+      }
+    } catch (e) {
+      console.warn('aggregates collection not available or read failed', e);
+    }
+
+    const modules = await computeAggregates(key, aggDoc);
     return res.json({ ok: true, aggregates: modules });
   }
   catch (err: any) {
@@ -517,8 +561,129 @@ app.get('/api/aggregates', async (req, res) => {
   }
 });
 
+// Module-specific analytics endpoints
+app.get('/api/analytics/ai-readiness', async (req, res) => {
+  try {
+    const { companyId, surveyId } = req.query;
+    const key: any = {};
+    if (companyId) key.companyId = String(companyId);
+    if (surveyId) key.surveyId = String(surveyId);
+    const aggregatesColl = db.collection('aggregates');
+    let aggDoc: any = null;
+    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e) { /* ignore */ }
+    const modules = await computeAggregates(key, aggDoc);
+    const mod = modules['ai-readiness'] || { questionScores: [], summaryMetrics: {} };
+    return res.json({ ok: true, analytics: mod });
+  } catch (err: any) {
+    console.error('GET /api/analytics/ai-readiness error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
+
+app.get('/api/analytics/leadership', async (req, res) => {
+  try {
+    const { companyId, surveyId } = req.query;
+    const key: any = {};
+    if (companyId) key.companyId = String(companyId);
+    if (surveyId) key.surveyId = String(surveyId);
+    const aggregatesColl = db.collection('aggregates');
+    let aggDoc: any = null;
+    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e) { /* ignore */ }
+    const modules = await computeAggregates(key, aggDoc);
+    const mod = modules['leadership'] || { questionScores: [], summaryMetrics: {} };
+    return res.json({ ok: true, analytics: mod });
+  } catch (err: any) {
+    console.error('GET /api/analytics/leadership error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
+
+app.get('/api/analytics/employee-experience', async (req, res) => {
+  try {
+    const { companyId, surveyId } = req.query;
+    const key: any = {};
+    if (companyId) key.companyId = String(companyId);
+    if (surveyId) key.surveyId = String(surveyId);
+    const aggregatesColl = db.collection('aggregates');
+    let aggDoc: any = null;
+    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e) { /* ignore */ }
+    const modules = await computeAggregates(key, aggDoc);
+    const mod = modules['employee-experience'] || { questionScores: [], summaryMetrics: {} };
+    return res.json({ ok: true, analytics: mod });
+  } catch (err: any) {
+    console.error('GET /api/analytics/employee-experience error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
+
 // Simple health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+// Campaigns / Survey management endpoints
+// NOTE: These are intentionally permissive for dev — secure them before production (add auth/adminRequired)
+app.get('/api/campaigns', async (req, res) => {
+  try {
+    const campaigns = db.collection('campaigns');
+    // Use limit before toArray to support in-memory fallback implementation
+    const docs = await campaigns.find({}).sort({ createdDate: -1 }).limit(1000).toArray();
+    return res.json({ ok: true, campaigns: docs });
+  } catch (err: any) {
+    console.error('GET /api/campaigns error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
+
+app.post('/api/campaigns', async (req, res) => {
+  try {
+    const body = req.body;
+    if (!body || !body.companyName) return res.status(400).json({ error: 'companyName required' });
+    const campaigns = db.collection('campaigns');
+    const created = { ...body, createdDate: new Date().toISOString(), status: body.status || 'active' };
+    const result = await campaigns.insertOne(created);
+    return res.json({ ok: true, insertedId: result.insertedId, campaign: created });
+  } catch (err: any) {
+    console.error('POST /api/campaigns error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
+
+app.get('/api/campaigns/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const campaigns = db.collection('campaigns');
+    const doc = await campaigns.findOne({ id } as any) || await campaigns.findOne({ _id: id } as any);
+    if (!doc) return res.status(404).json({ error: 'not found' });
+    return res.json({ ok: true, campaign: doc });
+  } catch (err: any) {
+    console.error('GET /api/campaigns/:id error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
+
+app.put('/api/campaigns/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body || {};
+    const campaigns = db.collection('campaigns');
+    await campaigns.updateOne({ id } as any, { $set: updates });
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('PUT /api/campaigns/:id error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
+
+app.delete('/api/campaigns/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const campaigns = db.collection('campaigns');
+    await campaigns.deleteOne({ id } as any);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('DELETE /api/campaigns/:id error', err);
+    return res.status(500).json({ error: err.message || 'internal server error' });
+  }
+});
 
 const PORT = Number(process.env.PORT || 4000);
 

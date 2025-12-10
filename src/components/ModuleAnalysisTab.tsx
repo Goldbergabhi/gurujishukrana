@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Badge } from "./ui/badge";
@@ -43,6 +44,7 @@ interface ModuleAnalysisTabProps {
   surveyResponses?: Record<string, string>;
   // Optional: module id for the responses (e.g., 'ai-readiness')
   moduleId?: string;
+  backendAggregates?: any;
 }
 
 export function ModuleAnalysisTab({
@@ -53,6 +55,7 @@ export function ModuleAnalysisTab({
   sectionData = [],
   surveyResponses,
   moduleId
+  , backendAggregates = null
 }: ModuleAnalysisTabProps) {
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'all' | 'high-impact' | 'needs-attention'>('all');
@@ -70,26 +73,73 @@ export function ModuleAnalysisTab({
   }).sort((a, b) => b.score - a.score);
 
   // Mock trend data
-  const trendData = [
-    { period: 'Q1', score: summaryMetrics.positiveAverage - 8 },
-    { period: 'Q2', score: summaryMetrics.positiveAverage - 4 },
-    { period: 'Q3', score: summaryMetrics.positiveAverage - 1 },
-    { period: 'Q4', score: summaryMetrics.positiveAverage }
-  ];
+  const trendData = useMemo(() => {
+    try {
+      if (backendAggregates && moduleId) {
+        const server = backendAggregates[moduleId];
+        if (server && Array.isArray(server.timeSeries) && server.timeSeries.length > 0) {
+          return server.timeSeries.map((t: any) => ({ period: t.label || t.period || t.date || '', score: t.average || t.value || t.score || summaryMetrics.positiveAverage }));
+        }
+      }
+    } catch (e) {}
+    return [
+      { period: 'Q1', score: summaryMetrics.positiveAverage - 8 },
+      { period: 'Q2', score: summaryMetrics.positiveAverage - 4 },
+  // Prefer server data for this module when available. If server data exists, replace inputs.
+  const server = useMemo(() => (backendAggregates && moduleId ? backendAggregates[moduleId] : null), [backendAggregates, moduleId]);
 
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-green-600';
-    if (score >= 60) return 'text-yellow-600';
-    return 'text-red-600';
-  };
+  const localSummary = useMemo(() => {
+    if (server && server.summaryMetrics) {
+      const s = server.summaryMetrics;
+      return {
+        positiveAverage: typeof s.positiveAverage === 'number' ? s.positiveAverage : null,
+        totalQuestions: typeof s.totalQuestions === 'number' ? s.totalQuestions : null,
+        responseCount: typeof s.responseCount === 'number' ? s.responseCount : null,
+        trend: typeof s.trend === 'number' ? s.trend : null
+      };
+    }
+    return { positiveAverage: null, totalQuestions: null, responseCount: null, trend: null };
+  }, [server]);
 
-  const getScoreBgColor = (score: number) => {
-    if (score >= 80) return 'bg-green-50 border-green-200';
-    if (score >= 60) return 'bg-yellow-50 border-yellow-200';
-    return 'bg-red-50 border-red-200';
-  };
+  const localQuestions = useMemo(() => {
+    if (server && Array.isArray(server.questionScores) && server.questionScores.length > 0) {
+      return server.questionScores.map((q: any) => ({ question: q.questionText || q.question || q.id, score: typeof q.average === 'number' ? q.average : Math.round(q.positivePercentage || 0), section: q.section }));
+    }
+    return [];
+  }, [server]);
 
-  return (
+  const localDemographics = useMemo(() => {
+    if (server && Array.isArray(server.demographics) && server.demographics.length > 0) {
+      return server.demographics.map((d: any) => ({ department: d.group || d.key || d.name, score: Math.round(d.average || d.score || 0), responses: d.count || d.total || 0 }));
+    }
+    return [];
+  }, [server]);
+
+  const localSections = useMemo(() => {
+    if (server && Array.isArray(server.sections) && server.sections.length > 0) {
+      return server.sections.map((s: any) => ({ section: s.name || s.section, score: Math.round(s.average || s.score || 0), questionCount: s.questionCount || 0 }));
+    }
+    return [];
+  }, [server]);
+
+  // If server data exists, override incoming props with server-driven values
+  if (server) {
+    summaryMetrics = localSummary as any;
+    questionScores = localQuestions as any;
+    demographicData = localDemographics as any;
+    sectionData = localSections as any;
+  }
+      { period: 'Q3', score: summaryMetrics.positiveAverage - 1 },
+      { period: 'Q4', score: summaryMetrics.positiveAverage }
+  // Trend data: prefer server timeSeries, otherwise empty
+  const trendData = useMemo(() => {
+    try {
+      if (server && Array.isArray(server.timeSeries) && server.timeSeries.length > 0) {
+        return server.timeSeries.map((t: any) => ({ period: t.label || t.period || t.date || '', score: typeof t.average === 'number' ? t.average : (t.value || t.score || 0) }));
+      }
+    } catch (e) {}
+    return [];
+  }, [server]);
     <div className="space-y-6">
       {/* Summary Strip */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -113,16 +163,14 @@ export function ModuleAnalysisTab({
           </CardContent>
         </Card>
 
-        <Card>
+            <div className="text-2xl font-bold">{typeof summaryMetrics.positiveAverage === 'number' ? `${summaryMetrics.positiveAverage.toFixed(1)}%` : '—'}</div>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Score Range</CardTitle>
-            <Award className="h-4 w-4 text-yellow-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {Math.min(...questionScores.map(q => q.score)).toFixed(0)} - {Math.max(...questionScores.map(q => q.score)).toFixed(0)}%
-            </div>
-            <p className="text-xs text-gray-600 mt-1">Question score spread</p>
+              {typeof summaryMetrics.trend === 'number' ? (
+                summaryMetrics.trend >= 0 ? <TrendingUp className="h-3 w-3 text-green-600" /> : <TrendingDown className="h-3 w-3 text-red-600" />
+              ) : null}
+              <p className={`text-xs ${typeof summaryMetrics.trend === 'number' && summaryMetrics.trend >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {typeof summaryMetrics.trend === 'number' ? `${summaryMetrics.trend >= 0 ? '+' : ''}${summaryMetrics.trend.toFixed(1)}% vs last quarter` : 'Waiting for server trend data'}
+              </p>
           </CardContent>
         </Card>
 
@@ -133,7 +181,7 @@ export function ModuleAnalysisTab({
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{summaryMetrics.responseCount}</div>
-            <p className="text-xs text-gray-600 mt-1">Across {summaryMetrics.totalQuestions} questions</p>
+            <div className="text-2xl font-bold">{questionScores.length > 0 ? `${Math.min(...questionScores.map(q => q.score)).toFixed(0)} - ${Math.max(...questionScores.map(q => q.score)).toFixed(0)}%` : '—'}</div>
           </CardContent>
         </Card>
 
@@ -144,8 +192,8 @@ export function ModuleAnalysisTab({
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {questionScores.filter(q => q.score >= 80).length}
-            </div>
+            <div className="text-2xl font-bold">{typeof summaryMetrics.responseCount === 'number' ? summaryMetrics.responseCount : '—'}</div>
+            <p className="text-xs text-gray-600 mt-1">Across {typeof summaryMetrics.totalQuestions === 'number' ? summaryMetrics.totalQuestions : '—'} questions</p>
             <p className="text-xs text-gray-600 mt-1">Questions scoring 80%+</p>
           </CardContent>
         </Card>
@@ -155,7 +203,7 @@ export function ModuleAnalysisTab({
       <Card>
         <CardHeader>
           <CardTitle>Score Trend</CardTitle>
-          <CardDescription>Quarterly performance progression</CardDescription>
+            <div className="text-2xl font-bold">{questionScores.length > 0 ? questionScores.filter(q => q.score >= 80).length : '—'}</div>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={200}>
@@ -168,21 +216,25 @@ export function ModuleAnalysisTab({
                 type="monotone" 
                 dataKey="score" 
                 stroke="#3B82F6" 
-                strokeWidth={3}
-                dot={{ fill: '#3B82F6', strokeWidth: 2, r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Analysis Tabs */}
-      <Tabs defaultValue="questions" className="w-full">
-        <div className="flex items-center justify-between mb-4">
-          <TabsList>
-            <TabsTrigger value="questions">Question Scores</TabsTrigger>
-            {sectionData.length > 0 && (
-              <TabsTrigger value="sections">Sections</TabsTrigger>
+          {trendData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={trendData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="period" />
+                <YAxis />
+                <Tooltip formatter={(value) => [`${value}%`, 'Score']} />
+                <Line 
+                  type="monotone" 
+                  dataKey="score" 
+                  stroke="#3B82F6" 
+                  strokeWidth={3}
+                  dot={{ fill: '#3B82F6', strokeWidth: 2, r: 4 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="p-6 text-sm text-gray-600">Waiting for server trend data for this module.</div>
+          )}
             )}
             {demographicData.length > 0 && (
               <TabsTrigger value="demographics">Demographics</TabsTrigger>

@@ -20,6 +20,7 @@ interface PostSurveyDashboardProps {
   mockData: any;
   isStandalone?: boolean;
   backendAggregates?: any;
+  companyId?: string | null;
 }
 
 export function PostSurveyDashboard({ 
@@ -28,6 +29,7 @@ export function PostSurveyDashboard({
   surveyResponses,
   mockData,
   backendAggregates,
+  companyId = null,
   isStandalone = false
 }: PostSurveyDashboardProps) {
   const [selectedModule, setSelectedModule] = useState(completedModule);
@@ -61,50 +63,8 @@ export function PostSurveyDashboard({
     }
   };
 
-  // Mock survey campaigns data
-  const surveyCampaigns: SurveyCampaign[] = useMemo(() => [
-    {
-      id: '1',
-      title: 'AI Readiness Pulse Q4 2024',
-      status: 'live',
-      moduleId: 'ai-readiness',
-      startDate: '2024-10-01',
-      participantCount: 127,
-      completionRate: 89,
-      isActive: true
-    },
-    {
-      id: '2',
-      title: 'Leadership Assessment Q4 2024',
-      status: 'live',
-      moduleId: 'leadership',
-      startDate: '2024-09-15',
-      participantCount: 98,
-      completionRate: 76,
-      isActive: true
-    },
-    {
-      id: '3',
-      title: 'Employee Experience Survey Q4 2024',
-      status: 'live',
-      moduleId: 'employee-experience',
-      startDate: '2024-09-20',
-      participantCount: 156,
-      completionRate: 82,
-      isActive: true
-    },
-    {
-      id: '4',
-      title: 'Leadership Deep Dive Q3 2024',
-      status: 'closed',
-      moduleId: 'leadership',
-      startDate: '2024-07-01',
-      endDate: '2024-08-15',
-      participantCount: 134,
-      completionRate: 95,
-      isActive: false
-    }
-  ], []);
+  // Campaigns will be fetched from the backend in future; avoid embedded mock campaigns
+  const surveyCampaigns: SurveyCampaign[] = useMemo(() => [], []);
 
   const currentModule = moduleConfigs[selectedModule];
   const currentCampaigns = surveyCampaigns.filter(c => c.moduleId === selectedModule);
@@ -239,11 +199,13 @@ export function PostSurveyDashboard({
           </TabsList>
 
           <TabsContent value="responses" className="mt-6">
-            <PostSurveyResponsesPanel
-              module={selectedModule}
-              campaign={activeCampaign}
-              mockData={mockData}
-            />
+              <PostSurveyResponsesPanel
+                module={selectedModule}
+                campaign={activeCampaign}
+                mockData={mockData}
+                backendAggregates={backendAggregates}
+                companyId={companyId}
+              />
           </TabsContent>
 
           <TabsContent value="results" className="mt-6">
@@ -252,6 +214,8 @@ export function PostSurveyDashboard({
               campaign={activeCampaign}
               surveyResponses={surveyResponses}
               mockData={mockData}
+              backendAggregates={backendAggregates}
+              companyId={companyId}
             />
           </TabsContent>
         </Tabs>

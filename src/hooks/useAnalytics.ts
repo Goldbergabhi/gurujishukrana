@@ -12,43 +12,60 @@ import {
 } from '../utils/api';
 
 // Hook for overview analytics
-export function useOverviewAnalytics(surveyId?: string) {
+export function useOverviewAnalytics(surveyId?: string, companyId?: string) {
   const [state, setState] = useState<DataState<OverviewAnalytics>>(createInitialState());
 
   const fetchData = useCallback(async () => {
     setState(prev => setLoading(prev));
     try {
-      const data = await api.analytics.getOverview(surveyId);
+      const data = await api.analytics.getOverview({ companyId, surveyId });
       setState(prev => setData(prev, data));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to fetch overview analytics';
       setState(prev => setError(prev, message));
       console.error('Error fetching overview analytics:', error);
     }
-  }, [surveyId]);
+  }, [surveyId, companyId]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // Listen for global aggregates updates (triggered by SSE) and refetch when relevant
+  useEffect(() => {
+    const onAggregatesUpdated = (e: any) => {
+      try {
+        const detail = e?.detail || {};
+        // If surveyId is provided and matches this hook's surveyId (or no surveyId filter), refetch
+        if (!detail.surveyId || detail.surveyId === surveyId || !surveyId) {
+          fetchData();
+        }
+      } catch (err) {
+        // ignore
+      }
+    };
+    window.addEventListener('aggregates:updated', onAggregatesUpdated as EventListener);
+    return () => window.removeEventListener('aggregates:updated', onAggregatesUpdated as EventListener);
+  }, [fetchData, surveyId]);
+
   return { ...state, refetch: fetchData };
 }
 
 // Hook for AI Readiness analytics
-export function useAIReadinessAnalytics(surveyId?: string) {
+export function useAIReadinessAnalytics(surveyId?: string, companyId?: string) {
   const [state, setState] = useState<DataState<ModuleAnalytics>>(createInitialState());
 
   const fetchData = useCallback(async () => {
     setState(prev => setLoading(prev));
     try {
-      const data = await api.analytics.getAIReadiness(surveyId);
+      const data = await api.analytics.getAIReadiness({ companyId, surveyId });
       setState(prev => setData(prev, data));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to fetch AI Readiness analytics';
       setState(prev => setError(prev, message));
       console.error('Error fetching AI Readiness analytics:', error);
     }
-  }, [surveyId]);
+  }, [surveyId, companyId]);
 
   useEffect(() => {
     fetchData();
@@ -58,20 +75,20 @@ export function useAIReadinessAnalytics(surveyId?: string) {
 }
 
 // Hook for Leadership analytics
-export function useLeadershipAnalytics(surveyId?: string) {
+export function useLeadershipAnalytics(surveyId?: string, companyId?: string) {
   const [state, setState] = useState<DataState<ModuleAnalytics>>(createInitialState());
 
   const fetchData = useCallback(async () => {
     setState(prev => setLoading(prev));
     try {
-      const data = await api.analytics.getLeadership(surveyId);
+      const data = await api.analytics.getLeadership({ companyId, surveyId });
       setState(prev => setData(prev, data));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to fetch Leadership analytics';
       setState(prev => setError(prev, message));
       console.error('Error fetching Leadership analytics:', error);
     }
-  }, [surveyId]);
+  }, [surveyId, companyId]);
 
   useEffect(() => {
     fetchData();
@@ -81,20 +98,20 @@ export function useLeadershipAnalytics(surveyId?: string) {
 }
 
 // Hook for Employee Experience analytics
-export function useEmployeeExperienceAnalytics(surveyId?: string) {
+export function useEmployeeExperienceAnalytics(surveyId?: string, companyId?: string) {
   const [state, setState] = useState<DataState<ModuleAnalytics>>(createInitialState());
 
   const fetchData = useCallback(async () => {
     setState(prev => setLoading(prev));
     try {
-      const data = await api.analytics.getEmployeeExperience(surveyId);
+      const data = await api.analytics.getEmployeeExperience({ companyId, surveyId });
       setState(prev => setData(prev, data));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to fetch Employee Experience analytics';
       setState(prev => setError(prev, message));
       console.error('Error fetching Employee Experience analytics:', error);
     }
-  }, [surveyId]);
+  }, [surveyId, companyId]);
 
   useEffect(() => {
     fetchData();

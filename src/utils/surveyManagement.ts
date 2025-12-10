@@ -55,10 +55,11 @@ export function generateSurveyUrls(surveyConfig: SurveyConfig, baseUrl: string =
   dashboardUrl: string;
 } {
   const moduleParams = surveyConfig.modules.join(',');
-  return {
-    surveyUrl: `${baseUrl}?mode=survey&id=${surveyConfig.id}&type=${surveyConfig.surveyType}&modules=${moduleParams}`,
-    dashboardUrl: `${baseUrl}?survey=${surveyConfig.id}&modules=${moduleParams}&primary=${surveyConfig.primaryModule}`
-  };
+  // create a company slug to include in links so responses are scoped to the company
+  const companySlug = surveyConfig.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  const surveyUrl = `${baseUrl}?mode=survey&id=${surveyConfig.id}&type=${surveyConfig.surveyType}&modules=${moduleParams}&company=${encodeURIComponent(companySlug)}`;
+  const dashboardUrl = `${baseUrl}?survey=${surveyConfig.id}&modules=${moduleParams}&primary=${surveyConfig.primaryModule}&company=${encodeURIComponent(companySlug)}`;
+  return { surveyUrl, dashboardUrl };
 }
 
 // Generate standalone module survey URL (for selling single modules)
@@ -78,6 +79,7 @@ export function parseUrlParams(): {
   primaryModule?: string;
   mode?: string;
   isAdmin: boolean;
+  company?: string;
 } {
   const urlParams = new URLSearchParams(window.location.search);
   const surveyId = urlParams.get('survey') || urlParams.get('id');
@@ -86,6 +88,7 @@ export function parseUrlParams(): {
   const moduleParam = urlParams.get('module'); // Single module parameter
   const primaryModule = urlParams.get('primary');
   const mode = urlParams.get('mode');
+  const company = urlParams.get('company') || urlParams.get('companyId') || undefined;
   
   // If single module is specified, use it; otherwise parse modules list
   let modules: string[] = [];
@@ -101,7 +104,8 @@ export function parseUrlParams(): {
     modules,
     primaryModule: (moduleParam || primaryModule) as 'ai-readiness' | 'leadership' | 'employee-experience' | undefined,
     mode: mode || (moduleParam ? 'survey' : undefined), // Auto-set mode to survey if module is specified
-    isAdmin: !surveyId && !modules.length && !moduleParam // If no survey ID, modules, or module, assume admin view
+    isAdmin: !surveyId && !modules.length && !moduleParam, // If no survey ID, modules, or module, assume admin view
+    company: company
   };
 }
 

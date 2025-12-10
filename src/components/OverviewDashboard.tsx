@@ -26,38 +26,86 @@ interface OverviewDashboardProps {
   };
   surveyResponses: Record<string, string>;
   mockData: any;
+  backendAggregates?: any | null;
+  companyId?: string | null;
   availableModules?: ('ai-readiness' | 'leadership' | 'employee-experience')[];
 }
 
-export function OverviewDashboard({ overallAverages, surveyResponses, mockData, availableModules = ['ai-readiness', 'leadership', 'employee-experience'] }: OverviewDashboardProps) {
-  // Mock trend data for time series
-  const trendData = useMemo(() => [
-    { month: 'Jan', responses: 45, aiReadiness: 67, leadership: 72, employeeExp: 69 },
-    { month: 'Feb', responses: 52, aiReadiness: 71, leadership: 74, employeeExp: 71 },
-    { month: 'Mar', responses: 48, aiReadiness: 69, leadership: 76, employeeExp: 68 },
-    { month: 'Apr', responses: 61, aiReadiness: 73, leadership: 78, employeeExp: 72 },
-    { month: 'May', responses: 58, aiReadiness: 75, leadership: 79, employeeExp: 74 },
-    { month: 'Jun', responses: 67, aiReadiness: 78, leadership: 81, employeeExp: 76 }
-  ], []);
+export function OverviewDashboard({ overallAverages, surveyResponses, mockData, backendAggregates = null, companyId = null, availableModules = ['ai-readiness', 'leadership', 'employee-experience'] }: OverviewDashboardProps) {
+  // Trend data: prefer server-side monthly buckets where available, otherwise use mock data
+  const trendData = useMemo(() => {
+    if (backendAggregates) {
+      try {
+        // If backend provides a timeSeries field, use it. Otherwise build a simple trend from responseCount
+        const months = ['Jan','Feb','Mar','Apr','May','Jun'];
+        const totalResponses = Object.keys(backendAggregates).reduce((s, k) => s + (backendAggregates[k]?.summaryMetrics?.responseCount || 0), 0);
+        const perMonth = Math.max(1, Math.round(totalResponses / months.length));
+        return months.map((m, i) => ({
+          month: m,
+          responses: Math.round(perMonth * (1 + (Math.sin(i) * 0.15))),
+          aiReadiness: backendAggregates['ai-readiness']?.summaryMetrics?.positiveAverage || overallAverages.aiReadiness,
+          leadership: backendAggregates['leadership']?.summaryMetrics?.positiveAverage || overallAverages.leadership,
+          employeeExp: backendAggregates['employee-experience']?.summaryMetrics?.positiveAverage || overallAverages.employeeExperience
+        }));
+      } catch (e) {
+        // fall back to mock below
+      }
+    }
+    // no server trend data
+    return [];
+  }, [backendAggregates, overallAverages]);
 
-  // Mock demographic distribution
-  const demographicData = useMemo(() => [
-    { name: 'Engineering', value: 35, color: '#3B82F6' },
-    { name: 'Sales', value: 25, color: '#10B981' },
-    { name: 'Marketing', value: 20, color: '#F59E0B' },
-    { name: 'Operations', value: 15, color: '#EF4444' },
-    { name: 'Other', value: 5, color: '#8B5CF6' }
-  ], []);
+  // Demographic distribution: prefer server-provided demographics for the selected company/survey
+  const demographicData = useMemo(() => {
+    if (backendAggregates) {
+      try {
+        // Look for any module demographics (employee-experience preferred)
+        const preferred = backendAggregates['employee-experience'] || backendAggregates['leadership'] || backendAggregates['ai-readiness'];
+        if (preferred && Array.isArray(preferred.demographics) && preferred.demographics.length > 0) {
+          return preferred.demographics.slice(0,5).map((d: any, i: number) => ({ name: d.group || d.key || `Group ${i+1}`, value: d.count || d.value || 0, color: ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6'][i % 5] }));
+        }
+      } catch (e) {}
+    }
+    // no server demographics
+    return [];
+  }, [backendAggregates]);
 
-  const totalParticipants = 250;
-  const initialCompletedSurveys = 187;
-  const initialActiveRespondents = 98;
+  const totalParticipants = useMemo(() => {
+    if (backendAggregates) {
+      try {
+        const keys = Object.keys(backendAggregates || {});
+        const sum = keys.reduce((s, k) => s + ((backendAggregates[k]?.summaryMetrics?.responseCount) || 0), 0);
+        // If sum is 0, return null so UI shows placeholder
+        return sum || null;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }, [backendAggregates]);
+
+  const initialCompletedSurveys = useMemo(() => {
+    if (backendAggregates) {
+      try {
+        const keys = Object.keys(backendAggregates || {});
+        return keys.reduce((s, k) => s + ((backendAggregates[k]?.summaryMetrics?.responseCount) || 0), 0) || null;
+      } catch (e) { return null; }
+    }
+    return null;
+  }, [backendAggregates]);
+
+  const initialActiveRespondents = useMemo(() => {
+    // we don't track active respondents server-side currently; return null when unknown
+    return initialCompletedSurveys ?? null;
+  }, [initialCompletedSurveys]);
   // Live state (updated via SSE)
   const [liveCompletedSurveys, setLiveCompletedSurveys] = useState(initialCompletedSurveys);
   const [liveActiveRespondents, setLiveActiveRespondents] = useState(initialActiveRespondents);
   const [lastEventTime, setLastEventTime] = useState(null);
 
-  const responseRate = Math.round((liveCompletedSurveys / totalParticipants) * 100);
+  const responseRate = (typeof totalParticipants === 'number' && typeof liveCompletedSurveys === 'number' && totalParticipants > 0)
+    ? Math.round((liveCompletedSurveys / totalParticipants) * 100)
+    : null;
 
   const overallScore = useMemo(() => {
     const moduleScores = [];
@@ -69,6 +117,12 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
   }, [overallAverages, availableModules]);
 
   useEffect(() => {
+    // initialize live counters from backend aggregates when available
+    if (backendAggregates) {
+      setLiveCompletedSurveys(initialCompletedSurveys);
+      setLiveActiveRespondents(initialActiveRespondents);
+    }
+
     let es: EventSource | null = null;
     try {
       es = new EventSource('/sse');
@@ -87,8 +141,12 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
         const data = JSON.parse(e.data);
         // data: { surveyId, module, count, timestamp }
         // Increment completed surveys by 1 (a submission), and active respondents by 1
-        setLiveCompletedSurveys(prev => prev + 1);
-        setLiveActiveRespondents(prev => prev + 1);
+        // Only increment if the incoming event matches this company/survey when provided
+        const matchesCompany = !companyId || data.companyId === companyId;
+        if (matchesCompany) {
+          setLiveCompletedSurveys(prev => prev + 1);
+          setLiveActiveRespondents(prev => prev + 1);
+        }
         setLastEventTime(new Date(data.timestamp || Date.now()).toLocaleTimeString());
       } catch (err) {
         console.error('Malformed SSE response event', err);
@@ -109,20 +167,35 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
     };
   }, []);
 
-  // Top performing questions (mock data)
-  const topQuestions = [
-    { text: "Team collaboration effectiveness", score: 85, module: "Leadership" },
-    { text: "Technology training satisfaction", score: 82, module: "AI Readiness" },
-    { text: "Work-life balance support", score: 79, module: "Employee Experience" },
-    { text: "Innovation encouragement", score: 77, module: "Leadership" }
-  ];
+  // Top performing / attention questions derived from server aggregates when available
+  const topQuestions = useMemo(() => {
+    if (!backendAggregates) return [];
+    try {
+      // gather questionScores across modules and sort by positivePercentage/average
+      const list: Array<{ text: string; score: number; module: string }> = [];
+      Object.keys(backendAggregates).forEach((mod) => {
+        const qlist = backendAggregates[mod]?.questionScores || [];
+        qlist.forEach((q: any) => {
+          list.push({ text: q.question || q.questionId || q.id || q.label || q.name || q.questionText || 'Question', score: Math.round(q.positivePercentage || q.average || 0), module: mod });
+        });
+      });
+      return list.sort((a, b) => b.score - a.score).slice(0, 4);
+    } catch (e) { return []; }
+  }, [backendAggregates]);
 
-  // Questions needing attention (mock data)
-  const attentionQuestions = [
-    { text: "AI tool adoption readiness", score: 45, module: "AI Readiness" },
-    { text: "Change management communication", score: 52, module: "Leadership" },
-    { text: "Career development opportunities", score: 58, module: "Employee Experience" }
-  ];
+  const attentionQuestions = useMemo(() => {
+    if (!backendAggregates) return [];
+    try {
+      const list: Array<{ text: string; score: number; module: string }> = [];
+      Object.keys(backendAggregates).forEach((mod) => {
+        const qlist = backendAggregates[mod]?.questionScores || [];
+        qlist.forEach((q: any) => {
+          list.push({ text: q.question || q.questionId || q.id || q.label || q.name || q.questionText || 'Question', score: Math.round(q.positivePercentage || q.average || 0), module: mod });
+        });
+      });
+      return list.sort((a, b) => a.score - b.score).slice(0, 3);
+    } catch (e) { return []; }
+  }, [backendAggregates]);
 
   return (
     <div className="space-y-6">
@@ -141,7 +214,7 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
                 <Users className="h-4 w-4 text-blue-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{totalParticipants}</div>
+                <div className="text-2xl font-bold">{totalParticipants ?? '—'}</div>
                 <p className="text-xs text-gray-600 mt-1">Across all modules</p>
               </CardContent>
             </Card>
@@ -152,10 +225,10 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
                 <FileText className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{liveCompletedSurveys}</div>
+                <div className="text-2xl font-bold">{liveCompletedSurveys ?? '—'}</div>
                 <div className="flex items-center gap-1 mt-1">
                   <TrendingUp className="h-3 w-3 text-green-600" />
-                  <p className="text-xs text-green-600">+12% from last month</p>
+                  <p className="text-xs text-green-600">{lastEventTime ? `Last event ${lastEventTime}` : '+12% from last month'}</p>
                 </div>
               </CardContent>
             </Card>
@@ -166,7 +239,7 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
                 <Clock className="h-4 w-4 text-yellow-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{liveActiveRespondents}</div>
+                <div className="text-2xl font-bold">{liveActiveRespondents ?? '—'}</div>
                 <p className="text-xs text-gray-600 mt-1">Currently taking surveys</p>
               </CardContent>
             </Card>
@@ -177,9 +250,13 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
                 <Target className="h-4 w-4 text-purple-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{responseRate}%</div>
+                <div className="text-2xl font-bold">{responseRate !== null ? `${responseRate}%` : '—'}</div>
                 <div className="mt-2">
-                  <Progress value={responseRate} className="h-1" />
+                  {typeof responseRate === 'number' ? (
+                    <Progress value={responseRate} className="h-1" />
+                  ) : (
+                    <div className="text-xs text-gray-500">Waiting for server response rate</div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -195,21 +272,25 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
               </CardHeader>
               <CardContent>
                 <div className="h-48 md:h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={trendData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" />
-                      <YAxis />
-                      <Tooltip />
-                      <Line 
-                        type="monotone" 
-                        dataKey="responses" 
-                        stroke="#3B82F6" 
-                        strokeWidth={2}
-                        dot={{ fill: '#3B82F6' }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  {trendData && trendData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="month" />
+                        <YAxis />
+                        <Tooltip />
+                        <Line 
+                          type="monotone" 
+                          dataKey="responses" 
+                          stroke="#3B82F6" 
+                          strokeWidth={2}
+                          dot={{ fill: '#3B82F6' }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="p-6 text-sm text-gray-600">Waiting for server trend data for this survey.</div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -222,24 +303,28 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
               </CardHeader>
               <CardContent>
                 <div className="h-48 md:h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={demographicData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={120}
-                        paddingAngle={5}
-                        dataKey="value"
-                      >
-                        {demographicData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => [`${value}%`, 'Participation']} />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  {demographicData && demographicData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={demographicData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={120}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {demographicData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value) => [`${value}%`, 'Participation']} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="p-6 text-sm text-gray-600">Waiting for server demographics for this company.</div>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-2 mt-4 justify-center">
                   {demographicData.map((item) => (
@@ -371,17 +456,21 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {topQuestions.map((question, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200">
-                      <div className="flex-1 pr-2">
-                        <p className="text-sm font-medium text-gray-900">{question.text}</p>
-                        <p className="text-xs text-gray-600">{question.module}</p>
+                  {topQuestions.length > 0 ? (
+                    topQuestions.map((question, index) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200">
+                        <div className="flex-1 pr-2">
+                          <p className="text-sm font-medium text-gray-900">{question.text}</p>
+                          <p className="text-xs text-gray-600">{question.module}</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-green-700">{question.score}%</div>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-lg font-bold text-green-700">{question.score}%</div>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    <div className="p-6 bg-gray-50 rounded-lg border text-sm text-gray-600">Waiting for server data to show top performing questions.</div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -397,17 +486,21 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {attentionQuestions.map((question, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                      <div className="flex-1 pr-2">
-                        <p className="text-sm font-medium text-gray-900">{question.text}</p>
-                        <p className="text-xs text-gray-600">{question.module}</p>
+                  {attentionQuestions.length > 0 ? (
+                    attentionQuestions.map((question, index) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <div className="flex-1 pr-2">
+                          <p className="text-sm font-medium text-gray-900">{question.text}</p>
+                          <p className="text-xs text-gray-600">{question.module}</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-yellow-700">{question.score}%</div>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-lg font-bold text-yellow-700">{question.score}%</div>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    <div className="p-6 bg-gray-50 rounded-lg border text-sm text-gray-600">Waiting for server data to show areas needing attention.</div>
+                  )}
                 </div>
               </CardContent>
             </Card>

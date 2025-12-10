@@ -13,6 +13,8 @@ import { PostSurveyDashboard } from "./components/PostSurveyDashboard";
 import { SurveyManagement } from "./components/SurveyManagement";
 import { WelcomeBanner } from "./components/WelcomeBanner";
 import { generateMockData } from "./utils/mockData";
+import api from './utils/api';
+import { API_BASE_URL } from './config/database';
 import { parseUrlParams, getSurveyConfig, filterDataBySurvey } from "./utils/surveyManagement";
 import { 
   calculateOverallAverages,
@@ -76,6 +78,46 @@ export default function App() {
   useEffect(() => {
     setMockData(generateMockData(urlParams.surveyId));
   }, [urlParams.surveyId]);
+
+  // Fetch aggregates from API when a surveyId is present so dashboards reflect persisted data
+  const [apiAggregates, setApiAggregates] = useState<any | null>(null);
+  const [apiLoading, setApiLoading] = useState(false);
+  const [campaignInfo, setCampaignInfo] = useState<any | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    async function fetchAggregates() {
+      if (!urlParams.surveyId) {
+        setApiAggregates(null);
+        return;
+      }
+      setApiLoading(true);
+      try {
+        const companyQuery = urlParams.company ? `&companyId=${encodeURIComponent(urlParams.company)}` : '';
+        const res = await fetch(`${API_BASE_URL}/aggregates?surveyId=${encodeURIComponent(urlParams.surveyId)}${companyQuery}`);
+        if (!res.ok) throw new Error(`Failed to fetch aggregates: ${res.status}`);
+        const json = await res.json();
+        if (mounted) setApiAggregates(json.aggregates || null);
+      } catch (err) {
+        console.warn('Could not load aggregates, falling back to mock data', err);
+        if (mounted) setApiAggregates(null);
+      } finally {
+        if (mounted) setApiLoading(false);
+      }
+    }
+    fetchAggregates();
+    // also fetch campaign info for display
+    (async () => {
+      try {
+        if (urlParams.surveyId) {
+          const camp = await api.campaigns.getById(urlParams.surveyId);
+          setCampaignInfo(camp || null);
+        }
+      } catch (e) {
+        setCampaignInfo(null);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [urlParams.surveyId]);
   
   // Filter data by survey ID
   const filteredData = useMemo(() => {
@@ -86,42 +128,108 @@ export default function App() {
     };
   }, [mockData, urlParams.surveyId]);
 
-  // Calculate all metrics using filtered data
-  const overallAverages = useMemo(() => 
-    calculateOverallAverages(
+  // Calculate all metrics using filtered data (or API aggregates when available)
+  const overallAverages = useMemo(() => {
+    if (apiAggregates) {
+      return {
+        aiReadiness: apiAggregates['ai-readiness']?.summaryMetrics?.positiveAverage || 0,
+        leadership: apiAggregates['leadership']?.summaryMetrics?.positiveAverage || 0,
+        employeeExperience: apiAggregates['employee-experience']?.summaryMetrics?.positiveAverage || 0
+      };
+    }
+    return calculateOverallAverages(
       filteredData.aiReadinessData,
       filteredData.leadershipData,
       filteredData.employeeExperienceData
-    ), [filteredData]
-  );
+    );
+  }, [filteredData, apiAggregates]);
   
-  const aiReadinessBySection = useMemo(() => 
-    calculateAIReadinessBySection(filteredData.aiReadinessData), [filteredData.aiReadinessData]
-  );
+  const aiReadinessBySection = useMemo(() => {
+    if (apiAggregates && apiAggregates['ai-readiness'] && apiAggregates['ai-readiness'].questionScores) {
+      // Map questionScores into configured sections by distributing in order
+      const qlist = apiAggregates['ai-readiness'].questionScores;
+      const sections = moduleConfigs['ai-readiness'].sections;
+      const result: any[] = [];
+      let idx = 0;
+      sections.forEach((sec) => {
+        const take = sec.questions;
+        const slice = qlist.slice(idx, idx + take);
+        const total = slice.length;
+        const positiveSum = slice.reduce((s: number, q: any) => s + (q.positivePercentage || 0), 0);
+        result.push({ section: sec.name, positiveCount: 0, totalCount: total, positivePercentage: total > 0 ? Math.round((positiveSum / total) * 10) / 10 : 0 });
+        idx += take;
+      });
+      return result;
+    }
+    return calculateAIReadinessBySection(filteredData.aiReadinessData);
+  }, [filteredData.aiReadinessData, apiAggregates]);
   
-  const leadershipByLens = useMemo(() => 
-    calculateLeadershipByLens(filteredData.leadershipData), [filteredData.leadershipData]
-  );
+  const leadershipByLens = useMemo(() => {
+    if (apiAggregates && apiAggregates['leadership'] && apiAggregates['leadership'].questionScores) {
+      // Distribute leadership questionScores into configured sections (approximate)
+      const qlist = apiAggregates['leadership'].questionScores;
+      const sections = moduleConfigs['leadership'].sections;
+      const result: any[] = [];
+      let idx = 0;
+      sections.forEach((sec) => {
+        const take = sec.questions;
+        const slice = qlist.slice(idx, idx + take);
+        const total = slice.length;
+        const positiveSum = slice.reduce((s: number, q: any) => s + (q.positivePercentage || 0), 0);
+        result.push({ driver: sec.name, positiveCount: 0, totalCount: total, positivePercentage: total > 0 ? Math.round((positiveSum / total) * 10) / 10 : 0 });
+        idx += take;
+      });
+      return result;
+    }
+    return calculateLeadershipByLens(filteredData.leadershipData);
+  }, [filteredData.leadershipData, apiAggregates]);
+
+  const leadershipByConfiguration = useMemo(() => {
+    if (apiAggregates && apiAggregates['leadership'] && apiAggregates['leadership'].questionScores) {
+      // reuse lens grouping approximation
+      return leadershipByLens;
+    }
+    return calculateLeadershipByConfiguration(filteredData.leadershipData);
+  }, [filteredData.leadershipData, apiAggregates, leadershipByLens]);
+
+  const leadershipByDriver = useMemo(() => {
+    if (apiAggregates && apiAggregates['leadership'] && apiAggregates['leadership'].questionScores) {
+      return leadershipByLens;
+    }
+    return calculateLeadershipByDriver(filteredData.leadershipData);
+  }, [filteredData.leadershipData, apiAggregates, leadershipByLens]);
   
-  const leadershipByConfiguration = useMemo(() => 
-    calculateLeadershipByConfiguration(filteredData.leadershipData), [filteredData.leadershipData]
-  );
-  
-  const leadershipByDriver = useMemo(() => 
-    calculateLeadershipByDriver(filteredData.leadershipData), [filteredData.leadershipData]
-  );
-  
-  const employeeByCategory = useMemo(() => 
-    calculateEmployeeExperienceByCategory(filteredData.employeeExperienceData), [filteredData.employeeExperienceData]
-  );
-  
-  const employeeByDriver = useMemo(() => 
-    calculateEmployeeExperienceByDriver(filteredData.employeeExperienceData), [filteredData.employeeExperienceData]
-  );
-  
-  const employeeDistribution = useMemo(() => 
-    getEmployeeExperienceDistribution(filteredData.employeeExperienceData), [filteredData.employeeExperienceData]
-  );
+  const employeeByCategory = useMemo(() => {
+    if (apiAggregates && apiAggregates['employee-experience'] && apiAggregates['employee-experience'].questionScores) {
+      const qlist = apiAggregates['employee-experience'].questionScores;
+      const sections = moduleConfigs['employee-experience'].sections;
+      const result: any[] = [];
+      let idx = 0;
+      sections.forEach((sec) => {
+        const take = sec.questions;
+        const slice = qlist.slice(idx, idx + take);
+        const total = slice.length;
+        const positiveSum = slice.reduce((s: number, q: any) => s + (q.positivePercentage || 0), 0);
+        result.push({ driver: sec.name, positiveCount: 0, totalCount: total, positivePercentage: total > 0 ? Math.round((positiveSum / total) * 10) / 10 : 0 });
+        idx += take;
+      });
+      return result;
+    }
+    return calculateEmployeeExperienceByCategory(filteredData.employeeExperienceData);
+  }, [filteredData.employeeExperienceData, apiAggregates]);
+
+  const employeeByDriver = useMemo(() => {
+    if (apiAggregates) return employeeByCategory;
+    return calculateEmployeeExperienceByDriver(filteredData.employeeExperienceData);
+  }, [filteredData.employeeExperienceData, apiAggregates, employeeByCategory]);
+
+  const employeeDistribution = useMemo(() => {
+    // distribution requires raw responses; fall back to mock data when aggregates are present
+    if (apiAggregates) {
+      return { '0-10': {}, '1-5': {} } as any;
+    }
+    return getEmployeeExperienceDistribution(filteredData.employeeExperienceData);
+  }, [filteredData.employeeExperienceData, apiAggregates]);
 
   // Survey status tracking - updated for correct question counts
   const surveyStatus = useMemo(() => {
@@ -176,22 +284,44 @@ export default function App() {
   useEffect(() => {
     let es: EventSource | null = null;
     try {
-      es = new EventSource('/sse');
+      const devRoot = API_BASE_URL.replace(/\/api$/, '');
+      let sseUrl = `${devRoot}/sse`;
+      const params: string[] = [];
+      if (urlParams.company) params.push(`companyId=${encodeURIComponent(urlParams.company)}`);
+      if (urlParams.surveyId) params.push(`surveyId=${encodeURIComponent(urlParams.surveyId)}`);
+      if (params.length) sseUrl += `?${params.join('&')}`;
+      es = new EventSource(sseUrl);
     } catch (err) {
       console.warn('SSE not available', err);
       return;
     }
 
-    const onResponse = (e: MessageEvent) => {
+    const onResponseCreated = async (e: MessageEvent) => {
       try {
-        // regenerate mock data for current survey
+        // Refresh server aggregates when a new response is created for this company/survey
+        if (urlParams.surveyId) {
+          try {
+            const companyQuery = urlParams.company ? `&companyId=${encodeURIComponent(urlParams.company)}` : '';
+            const res = await fetch(`${API_BASE_URL}/aggregates?surveyId=${encodeURIComponent(urlParams.surveyId)}${companyQuery}`);
+            if (res.ok) {
+              const json = await res.json();
+              const aggregates = json.aggregates || null;
+              setApiAggregates(aggregates);
+              // Notify other parts of the app that aggregates updated (so hooks can refetch)
+              try { window.dispatchEvent(new CustomEvent('aggregates:updated', { detail: { surveyId: urlParams.surveyId, company: urlParams.company, aggregates } })); } catch (e) {}
+            }
+          } catch (err) {
+            console.warn('Failed to refresh aggregates on SSE', err);
+          }
+        }
+        // Also refresh mock data for components that rely on it
         setMockData(generateMockData(urlParams.surveyId));
       } catch (err) {
-        console.error('Failed to update mockData on SSE', err);
+        console.error('Failed to handle SSE response event', err);
       }
     };
 
-    es.addEventListener('response', onResponse as EventListener);
+    es.addEventListener('response:created', onResponseCreated as EventListener);
     es.onerror = (err) => {
       // EventSource auto-reconnects; log for diagnostics
       console.warn('SSE error', err);
@@ -267,6 +397,8 @@ export default function App() {
         onBackToDashboard={handleBackToDashboard}
         surveyResponses={surveyResponses}
         mockData={mockData}
+        backendAggregates={apiAggregates}
+        companyId={urlParams.company}
         isStandalone={isDirectSurveyLink}
       />
     );
@@ -275,6 +407,17 @@ export default function App() {
   return (
     <>
       <Toaster />
+      {campaignInfo && (
+        <div className="bg-white border-b py-3">
+          <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
+            <div>
+              <div className="text-sm text-gray-600">Viewing results for</div>
+              <div className="text-lg font-semibold">{campaignInfo.companyName}</div>
+            </div>
+            <div className="text-sm text-gray-500">Survey: {campaignInfo.id}</div>
+          </div>
+        </div>
+      )}
       <div className="min-h-screen bg-gray-50 flex">
         {/* Sidebar: hide on Employee Experience dashboard to allow full-width overview */}
         {!(activeModule === 'employee-experience' && mode === 'dashboard') && (
@@ -405,6 +548,8 @@ export default function App() {
                 overallAverages={overallAverages}
                 surveyResponses={surveyResponses}
                 mockData={filteredData}
+                backendAggregates={apiAggregates}
+                companyId={urlParams.company}
                 availableModules={availableModules}
               />
             </>
@@ -472,6 +617,7 @@ export default function App() {
                       }))}
                         surveyResponses={surveyResponses}
                         moduleId={'ai-readiness'}
+                        backendAggregates={apiAggregates}
                     />
                   )}
 
@@ -496,6 +642,7 @@ export default function App() {
                       }))}
                       surveyResponses={surveyResponses}
                       moduleId={'leadership'}
+                      backendAggregates={apiAggregates}
                     />
                   )}
 
@@ -521,6 +668,7 @@ export default function App() {
                         }))}
                         surveyResponses={surveyResponses}
                         moduleId={'employee-experience'}
+                        backendAggregates={apiAggregates}
                       />
 
                       {/* Also render the dedicated Employee Experience section below for parity with other modules */}
@@ -534,7 +682,8 @@ export default function App() {
                           overallPercentage={overallAverages.employeeExperience}
                           distribution={employeeDistribution}
                           surveyResponses={surveyResponses}
-                          moduleId={'employee-experience'}
+                            moduleId={'employee-experience'}
+                            backendAggregates={apiAggregates}
                         />
                       </div>
                     </>

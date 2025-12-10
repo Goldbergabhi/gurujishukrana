@@ -63,20 +63,23 @@ export interface CreateCampaignRequest {
 export const campaignAPI = {
   // Get all campaigns
   async getAll(): Promise<SurveyCampaign[]> {
-    return fetchAPI<SurveyCampaign[]>(API_ENDPOINTS.campaigns.list);
+    const res = await fetchAPI<any>(API_ENDPOINTS.campaigns.list);
+    return res?.campaigns || [];
   },
 
   // Get campaign by ID
   async getById(id: string): Promise<SurveyCampaign> {
-    return fetchAPI<SurveyCampaign>(API_ENDPOINTS.campaigns.getById(id));
+    const res = await fetchAPI<any>(API_ENDPOINTS.campaigns.getById(id));
+    return res?.campaign;
   },
 
   // Create new campaign
   async create(data: CreateCampaignRequest): Promise<SurveyCampaign> {
-    return fetchAPI<SurveyCampaign>(API_ENDPOINTS.campaigns.create, {
+    const res = await fetchAPI<any>(API_ENDPOINTS.campaigns.create, {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    return res?.campaign || (data as any);
   },
 
   // Update campaign
@@ -181,31 +184,31 @@ export interface ModuleAnalytics {
 
 export const analyticsAPI = {
   // Get overview analytics
-  async getOverview(surveyId?: string): Promise<OverviewAnalytics> {
-    return fetchAPI<OverviewAnalytics>(
-      API_ENDPOINTS.analytics.overview(surveyId)
-    );
+  async getOverview(opts?: { companyId?: string; surveyId?: string }): Promise<OverviewAnalytics> {
+    const base = API_ENDPOINTS.analytics.overview(opts?.surveyId);
+    const url = opts && opts.companyId ? `${base}${base.includes('?') ? '&' : '?'}companyId=${encodeURIComponent(opts.companyId)}` : base;
+    return fetchAPI<OverviewAnalytics>(url);
   },
 
   // Get AI Readiness analytics
-  async getAIReadiness(surveyId?: string): Promise<ModuleAnalytics> {
-    return fetchAPI<ModuleAnalytics>(
-      API_ENDPOINTS.analytics.aiReadiness(surveyId)
-    );
+  async getAIReadiness(opts?: { companyId?: string; surveyId?: string }): Promise<ModuleAnalytics> {
+    const base = API_ENDPOINTS.analytics.aiReadiness(opts?.surveyId);
+    const url = opts && opts.companyId ? `${base}${base.includes('?') ? '&' : '?'}companyId=${encodeURIComponent(opts.companyId)}` : base;
+    return fetchAPI<ModuleAnalytics>(url);
   },
 
   // Get Leadership analytics
-  async getLeadership(surveyId?: string): Promise<ModuleAnalytics> {
-    return fetchAPI<ModuleAnalytics>(
-      API_ENDPOINTS.analytics.leadership(surveyId)
-    );
+  async getLeadership(opts?: { companyId?: string; surveyId?: string }): Promise<ModuleAnalytics> {
+    const base = API_ENDPOINTS.analytics.leadership(opts?.surveyId);
+    const url = opts && opts.companyId ? `${base}${base.includes('?') ? '&' : '?'}companyId=${encodeURIComponent(opts.companyId)}` : base;
+    return fetchAPI<ModuleAnalytics>(url);
   },
 
   // Get Employee Experience analytics
-  async getEmployeeExperience(surveyId?: string): Promise<ModuleAnalytics> {
-    return fetchAPI<ModuleAnalytics>(
-      API_ENDPOINTS.analytics.employeeExperience(surveyId)
-    );
+  async getEmployeeExperience(opts?: { companyId?: string; surveyId?: string }): Promise<ModuleAnalytics> {
+    const base = API_ENDPOINTS.analytics.employeeExperience(opts?.surveyId);
+    const url = opts && opts.companyId ? `${base}${base.includes('?') ? '&' : '?'}companyId=${encodeURIComponent(opts.companyId)}` : base;
+    return fetchAPI<ModuleAnalytics>(url);
   },
 };
 

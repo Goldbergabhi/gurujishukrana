@@ -22,7 +22,8 @@ export const MONGODB_CONFIG = {
 };
 
 // API Base URL - Your backend server
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+// Default API base points to the local backend port used by the dev server
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api';
 
 // API Endpoints
 export const API_ENDPOINTS = {
@@ -37,9 +38,11 @@ export const API_ENDPOINTS = {
   
   // Survey Responses
   responses: {
-    submit: `${API_BASE_URL}/responses/submit`,
-    getBySurvey: (surveyId: string) => `${API_BASE_URL}/responses/survey/${surveyId}`,
-    getByUser: (userId: string) => `${API_BASE_URL}/responses/user/${userId}`,
+    // Server expects POST /api/responses
+    submit: `${API_BASE_URL}/responses`,
+    // Server exposes GET /api/responses with query params for surveyId or userId
+    getBySurvey: (surveyId: string) => `${API_BASE_URL}/responses?surveyId=${surveyId}`,
+    getByUser: (userId: string) => `${API_BASE_URL}/responses?userId=${userId}`,
   },
   
   // Analytics

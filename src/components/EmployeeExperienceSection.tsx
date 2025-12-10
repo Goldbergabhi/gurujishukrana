@@ -11,6 +11,7 @@ interface EmployeeExperienceSectionProps {
   driverData: DriverResult[];
   overallPercentage: number;
   distribution: { '0-10': Record<number, number>; '1-5': Record<number, number> };
+  backendAggregates?: any | null;
 }
 
 export function EmployeeExperienceSection({ 
@@ -19,9 +20,11 @@ export function EmployeeExperienceSection({
   overallPercentage,
   distribution,
   surveyResponses,
-  moduleId
+  moduleId,
+  backendAggregates = null
 }: EmployeeExperienceSectionProps & { surveyResponses?: Record<string,string>, moduleId?: string }) {
-  
+  const server = backendAggregates?.['employee-experience'] || backendAggregates?.['leadership'] || backendAggregates?.['ai-readiness'] || null;
+  const serverSummary = server?.summaryMetrics || null;
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -40,9 +43,14 @@ export function EmployeeExperienceSection({
     return null;
   };
 
-  // Sort data by positive percentage
-  const sortedCategoryData = [...categoryData].sort((a, b) => b.positivePercentage - a.positivePercentage);
-  const sortedDriverData = [...driverData].sort((a, b) => b.positivePercentage - a.positivePercentage);
+  // Prefer server-driven lists when available, otherwise show empty lists to avoid mock values
+  const sortedCategoryData = server && Array.isArray(server.demographics) && server.demographics.length > 0
+    ? server.demographics.map((d: any) => ({ driver: d.group || d.key || d.name || 'Group', positivePercentage: Math.round(d.average || d.positivePercentage || 0), positiveCount: d.positiveCount || d.count || 0, totalCount: d.count || d.total || 0 }))
+    : [];
+
+  const sortedDriverData = server && Array.isArray(server.questionScores) && server.questionScores.length > 0
+    ? server.questionScores.map((q: any) => ({ driver: q.questionText || q.question || q.id, positivePercentage: typeof q.average === 'number' ? q.average : Math.round(q.positivePercentage || 0) }))
+    : [];
 
   // Prepare distribution data for charts
   const distribution1to5 = Object.entries(distribution['1-5']).map(([score, count]) => ({
@@ -62,23 +70,25 @@ export function EmployeeExperienceSection({
     neutral: '#6b7280'
   };
 
-  // Mock daily responses for the Daily Responses chart (can be replaced with real data)
-  const dailyResponses = [
-    { day: 'Mon', responses: 8 },
-    { day: 'Tue', responses: 12 },
-    { day: 'Wed', responses: 10 },
-    { day: 'Thu', responses: 14 },
-    { day: 'Fri', responses: 9 },
-    { day: 'Sat', responses: 4 },
-    { day: 'Sun', responses: 6 }
-  ];
+  // Daily responses: prefer backend timeSeries when available, otherwise show empty
+  const dailyResponses = (() => {
+    try {
+      if (server && Array.isArray(server.timeSeries) && server.timeSeries.length > 0) {
+        return server.timeSeries.map((t: any) => ({ day: t.label || t.date || 'day', responses: t.count || t.value || 0 }));
+      }
+    } catch (e) {}
+    return [];
+  })();
 
-  // Mock demographic distribution for department pie (derive from categories if available)
-  const demographicData = sortedCategoryData.slice(0,5).map((c, i) => ({
-    name: c.driver,
-    value: c.totalCount || Math.max(1, Math.round(c.positivePercentage)),
-    color: ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6'][i % 5]
-  }));
+  // Demographic distribution: prefer backend-provided demographics when available
+  const demographicData = (() => {
+    try {
+      if (server && Array.isArray(server.demographics) && server.demographics.length > 0) {
+        return server.demographics.slice(0,5).map((d: any, i: number) => ({ name: d.group || d.key || `Group ${i+1}`, value: d.count || d.value || 0, color: ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6'][i % 5] }));
+      }
+    } catch (e) {}
+    return [];
+  })();
 
   return (
     <div className="space-y-6">
@@ -94,7 +104,7 @@ export function EmployeeExperienceSection({
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-800">{overallPercentage.toFixed(1)}%</div>
+            <div className="text-2xl font-bold text-green-800">{typeof serverSummary?.positiveAverage === 'number' ? `${serverSummary.positiveAverage.toFixed(1)}%` : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Responses scoring positive on the scale</p>
           </CardContent>
         </Card>
@@ -110,13 +120,7 @@ export function EmployeeExperienceSection({
           </CardHeader>
           <CardContent>
             {/* Derive a rough completion rate from distribution counts if available */}
-            <div className="text-2xl font-bold">{(() => {
-              try {
-                const total = sortedCategoryData.reduce((s, c) => s + (c.totalCount || 0), 0) || 0;
-                const positive = sortedCategoryData.reduce((s, c) => s + (c.positiveCount || 0), 0) || 0;
-                return total > 0 ? `${Math.round((positive / total) * 100)}%` : '—';
-              } catch { return '—'; }
-            })()}</div>
+            <div className="text-2xl font-bold">{typeof serverSummary?.completionRate === 'number' ? `${serverSummary.completionRate}%` : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Based on available responses</p>
           </CardContent>
         </Card>
@@ -131,7 +135,7 @@ export function EmployeeExperienceSection({
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{Math.max(0, overallPercentage - 2).toFixed(1)}%</div>
+            <div className="text-2xl font-bold">{typeof serverSummary?.medianQuestionScore === 'number' ? `${serverSummary.medianQuestionScore.toFixed(1)}%` : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Middle score across all questions</p>
           </CardContent>
         </Card>
@@ -147,7 +151,7 @@ export function EmployeeExperienceSection({
           </CardHeader>
           <CardContent>
             {/* Pick top category by positivePercentage */}
-            <div className="text-lg font-semibold">{sortedCategoryData[0]?.driver ?? 'Product Ops'} {sortedCategoryData[0] ? `${Math.round(sortedCategoryData[0].positivePercentage)}%` : '87%'}</div>
+            <div className="text-lg font-semibold">{serverSummary?.topDemographic ? `${serverSummary.topDemographic.group} ${serverSummary.topDemographic.pct}%` : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Highest scoring group</p>
           </CardContent>
         </Card>
@@ -161,7 +165,7 @@ export function EmployeeExperienceSection({
             <Users className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{sortedCategoryData.reduce((s, c) => s + (c.totalCount || 0), 0) || '—'}</div>
+            <div className="text-2xl font-bold">{typeof serverSummary?.participantCount === 'number' ? serverSummary.participantCount : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Invited to this survey</p>
           </CardContent>
         </Card>
@@ -172,7 +176,7 @@ export function EmployeeExperienceSection({
             <FileText className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{sortedCategoryData.reduce((s, c) => s + (c.positiveCount || 0), 0) || '—'}</div>
+            <div className="text-2xl font-bold">{typeof serverSummary?.responseCount === 'number' ? serverSummary.responseCount : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Successfully submitted</p>
           </CardContent>
         </Card>
@@ -183,7 +187,7 @@ export function EmployeeExperienceSection({
             <Target className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{Math.max(0, Math.round((overallPercentage || 0) / 10))}</div>
+            <div className="text-2xl font-bold">{typeof serverSummary?.activeRespondents === 'number' ? serverSummary.activeRespondents : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Currently in progress</p>
           </CardContent>
         </Card>
@@ -194,7 +198,7 @@ export function EmployeeExperienceSection({
             <Clock className="h-4 w-4 text-purple-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">11.4 min</div>
+            <div className="text-2xl font-bold">{serverSummary?.averageCompletionTime ? `${serverSummary.averageCompletionTime} min` : '—'}</div>
             <p className="text-xs text-gray-600 mt-1">Average completion time</p>
           </CardContent>
         </Card>
@@ -252,19 +256,21 @@ export function EmployeeExperienceSection({
             </ResponsiveContainer>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-            {sortedCategoryData.map((category) => (
-              <div key={category.driver} className="text-center p-4 bg-gray-50 rounded-lg">
-                <div className="text-2xl font-bold text-green-600 mb-1">
-                  {category.positivePercentage.toFixed(1)}%
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {sortedCategoryData.length > 0 ? sortedCategoryData.map((category) => (
+                <div key={category.driver} className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className="text-2xl font-bold text-green-600 mb-1">
+                    {category.positivePercentage.toFixed(1)}%
+                  </div>
+                  <div className="text-sm font-medium text-gray-700">{category.driver}</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {category.positiveCount}/{category.totalCount} positive
+                  </div>
                 </div>
-                <div className="text-sm font-medium text-gray-700">{category.driver}</div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {category.positiveCount}/{category.totalCount} positive
-                </div>
-              </div>
-            ))}
-          </div>
+              )) : (
+                <div className="p-6 text-sm text-gray-600">Waiting for server category data for Employee Experience.</div>
+              )}
+            </div>
         </CardContent>
       </Card>
 
