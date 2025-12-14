@@ -13,11 +13,10 @@ interface PostSurveyResultsPanelProps {
   module: string;
   campaign?: SurveyCampaign;
   surveyResponses: Record<string, string>;
-  mockData: any;
   backendAggregates?: any;
   companyId?: string | null;
 }
-export function PostSurveyResultsPanel({ module, campaign, surveyResponses, mockData, backendAggregates = null, companyId = null }: PostSurveyResultsPanelProps) {
+export function PostSurveyResultsPanel({ module, campaign, surveyResponses, backendAggregates = null, companyId = null }: PostSurveyResultsPanelProps) {
   // Prefer backend question scores when available
   const questionScores = useMemo(() => {
     try {

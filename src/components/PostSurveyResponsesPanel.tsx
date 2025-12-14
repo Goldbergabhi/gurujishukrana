@@ -9,12 +9,11 @@ import { SurveyCampaign } from "../types/survey";
 interface PostSurveyResponsesPanelProps {
   module: string;
   campaign?: SurveyCampaign;
-  mockData: any;
   backendAggregates?: any;
   companyId?: string | null;
 }
 
-export function PostSurveyResponsesPanel({ module, campaign, mockData, backendAggregates = null, companyId = null }: PostSurveyResponsesPanelProps) {
+export function PostSurveyResponsesPanel({ module, campaign, backendAggregates = null, companyId = null }: PostSurveyResponsesPanelProps) {
   // Mock data for daily responses
   const dailyResponsesData = useMemo(() => [
     { date: 'Oct 1', responses: 12 },

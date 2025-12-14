@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import useSSE from './hooks/useSSE';
 import { Brain, Users, Heart, Menu, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
@@ -6,13 +7,12 @@ import { Toaster } from "./components/ui/sonner";
 import { Sidebar } from "./components/Sidebar";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ModuleSurveyTab } from "./components/ModuleSurveyTab";
-import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab.tsx";
+import ModuleAnalysisTab from "./components/ModuleAnalysisTab";
 import { EmployeeExperienceSection } from "./components/EmployeeExperienceSection";
 import { ModularSurvey } from "./components/ModularSurvey";
 import { PostSurveyDashboard } from "./components/PostSurveyDashboard";
 import { SurveyManagement } from "./components/SurveyManagement";
 import { WelcomeBanner } from "./components/WelcomeBanner";
-import { generateMockData } from "./utils/mockData";
 import api from './utils/api';
 import { API_BASE_URL } from './config/database';
 import { parseUrlParams, getSurveyConfig, filterDataBySurvey } from "./utils/surveyManagement";
@@ -71,13 +71,7 @@ export default function App() {
   );
   const [surveyResponses, setSurveyResponses] = useState<Record<string, string>>({});
   const [completedModule, setCompletedModule] = useState<string>('');
-  // Generate mock data (stateful so we can refresh it in real-time)
-  const [mockData, setMockData] = useState(() => generateMockData(urlParams.surveyId));
-
-  // Re-generate mock data when the survey filter changes
-  useEffect(() => {
-    setMockData(generateMockData(urlParams.surveyId));
-  }, [urlParams.surveyId]);
+  // No mock data: UI reads real aggregates from the backend via `apiAggregates`.
 
   // Fetch aggregates from API when a surveyId is present so dashboards reflect persisted data
   const [apiAggregates, setApiAggregates] = useState<any | null>(null);
@@ -119,14 +113,8 @@ export default function App() {
     return () => { mounted = false; };
   }, [urlParams.surveyId]);
   
-  // Filter data by survey ID
-  const filteredData = useMemo(() => {
-    return {
-      aiReadinessData: filterDataBySurvey(mockData.aiReadinessData, urlParams.surveyId),
-      leadershipData: filterDataBySurvey(mockData.leadershipData, urlParams.surveyId),
-      employeeExperienceData: filterDataBySurvey(mockData.employeeExperienceData, urlParams.surveyId)
-    };
-  }, [mockData, urlParams.surveyId]);
+  // No client-side mock data; components should prefer `apiAggregates` when present.
+  const filteredData = useMemo(() => ({ aiReadinessData: [], leadershipData: [], employeeExperienceData: [] }), [urlParams.surveyId]);
 
   // Calculate all metrics using filtered data (or API aggregates when available)
   const overallAverages = useMemo(() => {
@@ -280,57 +268,27 @@ export default function App() {
     setActiveModule('overview');
   };
 
-  // SSE listener: refresh mock data on response events so dashboards update in real-time
-  useEffect(() => {
-    let es: EventSource | null = null;
-    try {
-      const devRoot = API_BASE_URL.replace(/\/api$/, '');
-      let sseUrl = `${devRoot}/sse`;
-      const params: string[] = [];
-      if (urlParams.company) params.push(`companyId=${encodeURIComponent(urlParams.company)}`);
-      if (urlParams.surveyId) params.push(`surveyId=${encodeURIComponent(urlParams.surveyId)}`);
-      if (params.length) sseUrl += `?${params.join('&')}`;
-      es = new EventSource(sseUrl);
-    } catch (err) {
-      console.warn('SSE not available', err);
-      return;
-    }
-
-    const onResponseCreated = async (e: MessageEvent) => {
+  // SSE: subscribe and refresh aggregates on 'response:created' events
+  useSSE({
+    companyId: urlParams.company,
+    surveyId: urlParams.surveyId,
+    onEvent: async (e: MessageEvent) => {
       try {
-        // Refresh server aggregates when a new response is created for this company/survey
         if (urlParams.surveyId) {
-          try {
-            const companyQuery = urlParams.company ? `&companyId=${encodeURIComponent(urlParams.company)}` : '';
-            const res = await fetch(`${API_BASE_URL}/aggregates?surveyId=${encodeURIComponent(urlParams.surveyId)}${companyQuery}`);
-            if (res.ok) {
-              const json = await res.json();
-              const aggregates = json.aggregates || null;
-              setApiAggregates(aggregates);
-              // Notify other parts of the app that aggregates updated (so hooks can refetch)
-              try { window.dispatchEvent(new CustomEvent('aggregates:updated', { detail: { surveyId: urlParams.surveyId, company: urlParams.company, aggregates } })); } catch (e) {}
-            }
-          } catch (err) {
-            console.warn('Failed to refresh aggregates on SSE', err);
+          const companyQuery = urlParams.company ? `&companyId=${encodeURIComponent(urlParams.company)}` : '';
+          const res = await fetch(`${API_BASE_URL}/aggregates?surveyId=${encodeURIComponent(urlParams.surveyId)}${companyQuery}`);
+          if (res.ok) {
+            const json = await res.json();
+            const aggregates = json.aggregates || null;
+            setApiAggregates(aggregates);
+            try { window.dispatchEvent(new CustomEvent('aggregates:updated', { detail: { surveyId: urlParams.surveyId, company: urlParams.company, aggregates } })); } catch (e) {}
           }
         }
-        // Also refresh mock data for components that rely on it
-        setMockData(generateMockData(urlParams.surveyId));
       } catch (err) {
-        console.error('Failed to handle SSE response event', err);
+        console.warn('Failed to refresh aggregates on SSE', err);
       }
-    };
-
-    es.addEventListener('response:created', onResponseCreated as EventListener);
-    es.onerror = (err) => {
-      // EventSource auto-reconnects; log for diagnostics
-      console.warn('SSE error', err);
-    };
-
-    return () => {
-      if (es) es.close();
-    };
-  }, [urlParams.surveyId]);
+    }
+  });
 
   const handleModuleChange = (module: string) => {
     setActiveModule(module);
@@ -396,7 +354,6 @@ export default function App() {
         completedModule={completedModule}
         onBackToDashboard={handleBackToDashboard}
         surveyResponses={surveyResponses}
-        mockData={mockData}
         backendAggregates={apiAggregates}
         companyId={urlParams.company}
         isStandalone={isDirectSurveyLink}
@@ -547,7 +504,6 @@ export default function App() {
               <OverviewDashboard 
                 overallAverages={overallAverages}
                 surveyResponses={surveyResponses}
-                mockData={filteredData}
                 backendAggregates={apiAggregates}
                 companyId={urlParams.company}
                 isAdmin={urlParams.isAdmin}

@@ -25,14 +25,12 @@ interface OverviewDashboardProps {
     employeeExperience: number;
   };
   surveyResponses: Record<string, string>;
-  mockData: any;
   backendAggregates?: any | null;
   companyId?: string | null;
   isAdmin?: boolean;
   availableModules?: ('ai-readiness' | 'leadership' | 'employee-experience')[];
 }
-
-export function OverviewDashboard({ overallAverages, surveyResponses, mockData, backendAggregates = null, companyId = null, isAdmin = false, availableModules = ['ai-readiness', 'leadership', 'employee-experience'] }: OverviewDashboardProps) {
+export function OverviewDashboard({ overallAverages, surveyResponses, backendAggregates = null, companyId = null, isAdmin = false, availableModules = ['ai-readiness', 'leadership', 'employee-experience'] }: OverviewDashboardProps) {
   // Trend data: prefer server-side monthly buckets where available, otherwise use mock data
   const trendData = useMemo(() => {
     if (backendAggregates) {

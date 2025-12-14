@@ -7,7 +7,7 @@ import { toast } from "sonner@2.0.3";
 import { Sidebar } from "./components/Sidebar";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ModuleSurveyTab } from "./components/ModuleSurveyTab";
-import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab.tsx";
+import ModuleAnalysisTab from "./components/ModuleAnalysisTab";
 import { ModularSurvey } from "./components/ModularSurvey";
 import { PostSurveyDashboard } from "./components/PostSurveyDashboard";
 import { SurveyManagement } from "./components/SurveyManagement";
@@ -269,11 +269,7 @@ export default function App() {
         completedModule={completedModule}
         onBackToDashboard={handleBackToDashboard}
         surveyResponses={surveyResponses}
-        mockData={{
-          aiReadinessData: [],
-          leadershipData: [],
-          employeeExperienceData: []
-        }}
+        backendAggregates={overviewData?.modules}
         isStandalone={isDirectSurveyLink}
       />
     );
@@ -365,11 +361,7 @@ export default function App() {
                       employeeExperience: overviewData.employeeExperience
                     }}
                     surveyResponses={surveyResponses}
-                    mockData={{
-                      aiReadinessData: [],
-                      leadershipData: [],
-                      employeeExperienceData: []
-                    }}
+                    backendAggregates={overviewData?.modules}
                     availableModules={availableModules}
                   />
                 ) : (

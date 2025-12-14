@@ -8,11 +8,9 @@ interface ModuleSnapshotProps {
   module: string;
   campaign?: SurveyCampaign;
   surveyResponses: Record<string, string>;
-  mockData: any;
   serverSummary?: any;
 }
-
-export function ModuleSnapshot({ module, campaign, surveyResponses, mockData, serverSummary }: ModuleSnapshotProps) {
+export function ModuleSnapshot({ module, campaign, surveyResponses, serverSummary }: ModuleSnapshotProps) {
   const moduleData = useMemo(() => {
     // Calculate module-specific metrics
     const getModuleResponses = (prefix: string) => 

@@ -17,7 +17,6 @@ interface PostSurveyDashboardProps {
   completedModule: string;
   onBackToDashboard: () => void;
   surveyResponses: Record<string, string>;
-  mockData: any;
   isStandalone?: boolean;
   backendAggregates?: any;
   companyId?: string | null;
@@ -27,7 +26,6 @@ export function PostSurveyDashboard({
   completedModule, 
   onBackToDashboard, 
   surveyResponses,
-  mockData,
   backendAggregates,
   companyId = null,
   isStandalone = false
@@ -187,7 +185,6 @@ export function PostSurveyDashboard({
               module={selectedModule}
               campaign={activeCampaign}
               surveyResponses={surveyResponses}
-              mockData={mockData}
               serverSummary={backendAggregates?.[selectedModule]?.summaryMetrics}
             />
 
@@ -202,7 +199,6 @@ export function PostSurveyDashboard({
               <PostSurveyResponsesPanel
                 module={selectedModule}
                 campaign={activeCampaign}
-                mockData={mockData}
                 backendAggregates={backendAggregates}
                 companyId={companyId}
               />
@@ -213,7 +209,6 @@ export function PostSurveyDashboard({
               module={selectedModule}
               campaign={activeCampaign}
               surveyResponses={surveyResponses}
-              mockData={mockData}
               backendAggregates={backendAggregates}
               companyId={companyId}
             />

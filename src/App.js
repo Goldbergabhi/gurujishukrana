@@ -4,7 +4,7 @@ import { Toaster } from "./components/ui/sonner";
 import { Sidebar } from "./components/Sidebar";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ModuleSurveyTab } from "./components/ModuleSurveyTab";
-import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab.tsx";
+import ModuleAnalysisTab from "./components/ModuleAnalysisTab";
 import { EmployeeExperienceSection } from "./components/EmployeeExperienceSection";
 import { ModularSurvey } from "./components/ModularSurvey";
 import { PostSurveyDashboard } from "./components/PostSurveyDashboard";
