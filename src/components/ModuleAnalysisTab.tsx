@@ -1,39 +1,55 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
-export function ModuleAnalysisTab(props: { moduleId?: string; questionScores?: any[]; orgQuestionScores?: any[] }) {
-  // Render organization-level aggregates by default.
-  // Prefer `orgQuestionScores` when provided by the server; fall back to `questionScores`.
-  const { moduleId, questionScores = [], orgQuestionScores } = props;
-  const qs = Array.isArray(orgQuestionScores) && orgQuestionScores.length > 0 ? orgQuestionScores : questionScores || [];
+type QuestionScore = { questionId?: string; question?: string; average?: number; positivePercentage?: number; distribution?: number[]; counts?: number[]; totalResponses?: number };
 
-  const computeQuestionAvg = (q: any) => {
-    if (typeof q.avg === 'number') return q.avg;
-    if (typeof q.average === 'number') return q.average;
-    const counts = Array.isArray(q.distribution) && q.distribution.length === 6 ? q.distribution : Array.isArray(q.counts) && q.counts.length === 6 ? q.counts : null;
-    if (!counts) return 0;
-    const total = counts.reduce((a: number, b: number) => a + b, 0) || 1;
-    const weighted = counts.reduce((acc: number, c: number, i: number) => acc + c * (i + 1), 0);
-    return weighted / total;
+type ModuleAggregate = { questionScores: QuestionScore[]; summaryMetrics?: any };
+
+export default function ModuleAnalysisTab(props: { moduleId?: string; companyId?: string; surveyId?: string; orgQuestionScores?: QuestionScore[] }) {
+  const { moduleId = 'leadership', companyId, surveyId, orgQuestionScores } = props;
+  const [modules, setModules] = useState<Record<string, ModuleAggregate> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (orgQuestionScores && orgQuestionScores.length > 0) {
+      setModules({ [moduleId]: { questionScores: orgQuestionScores, summaryMetrics: {} } });
+      return;
+    }
+    if (!companyId || !surveyId) return;
+    let mounted = true;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/aggregates?companyId=${encodeURIComponent(companyId)}&surveyId=${encodeURIComponent(surveyId)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!mounted) return;
+        if (!data || !data.aggregates) {
+          setError('No aggregates available');
+          setModules(null);
+        } else {
+          setModules(data.aggregates as Record<string, ModuleAggregate>);
+        }
+      })
+      .catch((e) => { if (mounted) setError(String(e)); })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
+  }, [companyId, surveyId, orgQuestionScores, moduleId]);
+
+  const mod: ModuleAggregate = modules && modules[moduleId] ? modules[moduleId] : { questionScores: [], summaryMetrics: {} };
+
+  const questionScores = mod.questionScores || [];
+
+  const totalResponses = Number(mod.summaryMetrics?.responseCount || questionScores.reduce((s, q) => s + (q.totalResponses || 0), 0));
+  const orgAvg = Number(mod.summaryMetrics?.medianQuestionScore || 0);
+  const positiveAvg = Number(mod.summaryMetrics?.positiveAverage || 0);
+
+  const avgToPercent = (avg?: number) => {
+    if (!avg || typeof avg !== 'number') return 0;
+    return Math.max(0, Math.min(100, (avg / 6) * 100));
   };
 
-  const totals = qs.map((q: any) => ({ avg: computeQuestionAvg(q), total: q.totalResponses || (Array.isArray(q.distribution) ? q.distribution.reduce((a: number, b: number) => a + b, 0) : 0) || 0 }));
-  const totalResponses = totals.reduce((s, t) => s + t.total, 0) || 0;
-  const overall = totalResponses === 0 ? 0 : totals.reduce((s, t) => s + t.avg * t.total, 0) / totalResponses;
-
-  let pos = 0;
-  let tot = 0;
-  qs.forEach((q: any) => {
-    const counts = Array.isArray(q.distribution) && q.distribution.length === 6 ? q.distribution : Array.isArray(q.counts) && q.counts.length === 6 ? q.counts : null;
-    if (!counts) return;
-    pos += (counts[4] || 0) + (counts[5] || 0);
-    tot += counts.reduce((a: number, b: number) => a + b, 0);
-  });
-  const overallPositiveRate = tot === 0 ? 0 : (pos / tot) * 100;
-
-  const scoreShade = (i: number) => {
-    const shades = ['bg-gray-200', 'bg-gray-300', 'bg-green-100', 'bg-green-200', 'bg-green-400', 'bg-green-600'];
-    return shades[Math.max(0, Math.min(5, i - 1))];
-  };
+  if (loading) return <div>Loading organization aggregates…</div>;
+  if (error) return <div className="text-red-600">{error}</div>;
 
   return (
     <div className="space-y-6">
@@ -44,30 +60,27 @@ export function ModuleAnalysisTab(props: { moduleId?: string; questionScores?: a
         </div>
         <div className="p-4 rounded-lg bg-white shadow-sm border">
           <div className="text-sm text-gray-600 mb-1">Org Average</div>
-          <div className="text-3xl font-semibold">{overall ? overall.toFixed(1) : '—'}</div>
+          <div className="text-3xl font-semibold">{orgAvg ? orgAvg.toFixed(1) : '—'}</div>
         </div>
         <div className="p-4 rounded-lg bg-white shadow-sm border">
           <div className="text-sm text-gray-600 mb-1">Positive Rate</div>
-          <div className="text-3xl font-semibold text-green-600">{overallPositiveRate ? `${Math.round(overallPositiveRate)}%` : '0%'}</div>
+          <div className="text-3xl font-semibold text-green-600">{positiveAvg ? `${positiveAvg}%` : '0%'}</div>
         </div>
       </div>
 
       <div className="space-y-4">
-        {qs.map((question: any, idx: number) => {
-          const counts = Array.isArray(question.distribution) && question.distribution.length === 6 ? question.distribution : Array.isArray(question.counts) && question.counts.length === 6 ? question.counts : Array(6).fill(0);
-          const total = counts.reduce((a: number, b: number) => a + b, 0) || 0;
-          const percents = counts.map((c: number) => (total ? (c / total) * 100 : 0));
-          const avg = computeQuestionAvg(question);
-          const positive = total ? ((counts[4] || 0) + (counts[5] || 0)) / total * 100 : 0;
+        {questionScores.map((q, idx) => {
+          const avg = Number(q.average || 0);
+          const percent = avgToPercent(avg);
+          const positive = Number(q.positivePercentage || 0);
+          const total = Number(q.totalResponses || 0);
           return (
-            <div key={idx} className="p-4 rounded-lg bg-white shadow-sm border flex flex-col md:flex-row md:items-center md:justify-between">
+            <div key={q.questionId || idx} className="p-4 rounded-lg bg-white shadow-sm border flex flex-col md:flex-row md:items-center md:justify-between">
               <div className="flex-1 pr-4">
-                <div className="font-medium text-gray-900">{question.question || question.questionId || `Question ${idx + 1}`}</div>
+                <div className="font-medium text-gray-900">{q.question || q.questionId || `Question ${idx + 1}`}</div>
                 <div className="mt-3">
-                  <div className="w-full bg-gray-100 rounded-full h-5 overflow-hidden flex">
-                    {percents.map((p, i) => (
-                      <div key={i} className={`h-5 ${scoreShade(i + 1)}`} style={{ width: `${p}%` }} />
-                    ))}
+                  <div className="w-full bg-gray-100 rounded-full h-5 overflow-hidden">
+                    <div className="h-5 bg-blue-500" style={{ width: `${percent}%` }} />
                   </div>
                   <div className="flex justify-between text-xs text-gray-500 mt-2">
                     <div className="flex gap-2 items-center">
@@ -93,5 +106,3 @@ export function ModuleAnalysisTab(props: { moduleId?: string; questionScores?: a
     </div>
   );
 }
-
-export default ModuleAnalysisTab;
