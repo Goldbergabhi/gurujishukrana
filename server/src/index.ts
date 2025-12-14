@@ -34,6 +34,7 @@ console.log('MONGODB_URI=', MONGODB_URI ? '[REDACTED]' : null, '  MONGODB_DB=', 
 let mongoClient: MongoClient | undefined;
 let db: any; // may be a real Db or an in-memory fallback for dev
 let useInMemoryDb = false;
+let mongoChangeStream: any = null;
 
 async function connectMongo() {
   try {
@@ -63,7 +64,7 @@ async function connectMongo() {
       const store = new Map<string, any[]>();
       const getCollection = (name: string) => {
         if (!store.has(name)) store.set(name, []);
-        return {
+        const coll = {
           insertOne: async (doc: any) => {
             const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
             const saved = { _id: id, ...doc };
@@ -83,14 +84,75 @@ async function connectMongo() {
                 limit: (n: number) => ({ toArray: async () => results.slice(0, n) })
               })
             };
-          }
+          },
+          // basic findOne implementation
+          findOne: async (query: any = {}) => {
+            const arr = store.get(name)!.slice();
+            for (const d of arr) {
+              let ok = true;
+              for (const k of Object.keys(query)) {
+                if (d[k] !== query[k]) { ok = false; break; }
+              }
+              if (ok) return d;
+            }
+            return null;
+          },
+          // basic updateOne supporting $inc and $set for aggregates materialized store
+          updateOne: async (query: any, update: any, opts?: any) => {
+            let doc = await coll.findOne(query);
+            if (!doc && opts && opts.upsert) {
+              doc = { ...query };
+              store.get(name)!.unshift(doc);
+            }
+            if (!doc) return { matchedCount: 0, modifiedCount: 0 };
+            if (update.$inc) {
+              for (const [k, v] of Object.entries(update.$inc)) {
+                // support nested keys like 'questions.qid.count'
+                const parts = (k as string).split('.');
+                let target: any = doc;
+                for (let i = 0; i < parts.length - 1; i++) {
+                  const p = parts[i];
+                  if (typeof target[p] === 'undefined') target[p] = {};
+                  target = target[p];
+                }
+                const last = parts[parts.length - 1];
+                target[last] = (Number(target[last] || 0) + Number(v));
+              }
+            }
+            if (update.$set) {
+              for (const [k, v] of Object.entries(update.$set)) {
+                const parts = (k as string).split('.');
+                let target: any = doc;
+                for (let i = 0; i < parts.length - 1; i++) {
+                  const p = parts[i];
+                  if (typeof target[p] === 'undefined') target[p] = {};
+                  target = target[p];
+                }
+                const last = parts[parts.length - 1];
+                target[last] = v;
+              }
+            }
+            return { matchedCount: 1, modifiedCount: 1 };
+          },
+          countDocuments: async (q: any = {}) => {
+            const arr = store.get(name)!.slice();
+            if (!q || Object.keys(q).length === 0) return arr.length;
+            return arr.filter((d) => {
+              for (const k of Object.keys(q)) if (d[k] !== q[k]) return false;
+              return true;
+            }).length;
+          },
+          createIndex: async () => { /* noop for in-memory */ }
         };
+        return coll;
       };
       db = { collection: (name: string) => getCollection(name) };
       console.warn('mongodb-memory-server not available; using lightweight in-memory store (not persisted)');
     }
   }
 }
+
+// Redis/pubsub removed — SSE will be used for cross-instance notifications
 
 // Simple JWT auth middleware for API endpoints
 function jwtAuthRequired(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -134,8 +196,8 @@ app.get('/api/debug/db', async (req, res) => {
           }
         }
         info.collections = counts;
-      } catch (e) {
-        info.collectionsError = String(e?.message || e);
+      } catch (e: any) {
+        info.collectionsError = String((e as any)?.message || e);
       }
     } else {
       info.collections = useInMemoryDb ? 'in-memory-store (not persisted)' : 'db not initialized';
@@ -146,13 +208,54 @@ app.get('/api/debug/db', async (req, res) => {
   }
 });
 
-// API: submit a survey response
-app.post('/api/responses', jwtAuthRequired, async (req, res) => {
+// Dev-only: return raw responses and aggregates documents for a company+survey
+app.get('/api/debug/collections', async (req, res) => {
   try {
-    const payload = (req as any).auth as any;
-    const { companyId, surveyId, respondentId, answers } = req.body;
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'debug endpoint disabled in production' });
+    const { companyId, surveyId } = req.query;
+    if (!companyId || !surveyId) return res.status(400).json({ error: 'companyId and surveyId required' });
+    const responsesColl = db.collection('responses');
+    const aggregatesColl = db.collection('aggregates');
+    let responsesDocs: any[] = [];
+    try {
+      responsesDocs = await responsesColl.find({ companyId: String(companyId), surveyId: String(surveyId) }).sort({ createdAt: -1 }).limit(1000).toArray();
+    } catch (e: any) {
+      // try fallback for in-memory find
+      try {
+        const q = responsesColl.find({ companyId: String(companyId), surveyId: String(surveyId) });
+        responsesDocs = await (q.sort ? q.sort({ createdAt: -1 }).limit(1000).toArray() : q.toArray());
+      } catch (e2) { responsesDocs = []; }
+    }
+    let aggDoc: any = null;
+    try {
+      if (typeof aggregatesColl.findOne === 'function') aggDoc = await aggregatesColl.findOne({ companyId: String(companyId), surveyId: String(surveyId) });
+    } catch (e: any) { aggDoc = null; }
+    return res.json({ ok: true, responses: responsesDocs, aggregate: aggDoc });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
+// API: submit a survey response
+app.post('/api/responses', async (req, res) => {
+  try {
+    // Support multiple request shapes for backward compatibility:
+    // 1) { companyId, surveyId, respondentId, answers }
+    // 2) { surveyId, module, responses, metadata }
+    let { companyId, surveyId, respondentId, answers } = req.body || {};
+
+    // If the client sent the modern frontend shape, map it to legacy fields
+    if (!answers && req.body && req.body.responses) {
+      answers = req.body.responses;
+      if (!surveyId && req.body.surveyId) surveyId = req.body.surveyId;
+      if (!respondentId && req.body.metadata && req.body.metadata.userId) respondentId = req.body.metadata.userId;
+      if (!companyId && req.body.metadata && req.body.metadata.companyId) companyId = req.body.metadata.companyId;
+    }
+
+    // Allow companyId to be provided via query param when no auth is used
+    if (!companyId && req.query && req.query.companyId) companyId = String(req.query.companyId);
+
     if (!companyId || !surveyId || !answers) return res.status(400).json({ error: 'companyId, surveyId and answers required' });
-    if (String(payload.companyId) !== String(companyId)) return res.status(403).json({ error: 'Token not valid for companyId' });
 
     const responses = db.collection('responses');
     const now = new Date();
@@ -414,10 +517,10 @@ async function computeAggregates(key: any, aggDoc?: any) {
             modules[modKey].summaryMetrics.topDemographic = topDemographic;
           });
         }
-      } catch (demErr) {
+      } catch (demErr: any) {
         console.warn('Could not compute topDemographic from responses', demErr);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Failed to enrich modules with median/topDemographic', e);
     }
 
@@ -548,7 +651,7 @@ app.get('/api/aggregates', async (req, res) => {
       if (Object.keys(key).length > 0) {
         aggDoc = await aggregatesColl.findOne(key as any);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('aggregates collection not available or read failed', e);
     }
 
@@ -570,7 +673,7 @@ app.get('/api/analytics/ai-readiness', async (req, res) => {
     if (surveyId) key.surveyId = String(surveyId);
     const aggregatesColl = db.collection('aggregates');
     let aggDoc: any = null;
-    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e) { /* ignore */ }
+    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e: any) { /* ignore */ }
     const modules = await computeAggregates(key, aggDoc);
     const mod = modules['ai-readiness'] || { questionScores: [], summaryMetrics: {} };
     return res.json({ ok: true, analytics: mod });
@@ -588,7 +691,7 @@ app.get('/api/analytics/leadership', async (req, res) => {
     if (surveyId) key.surveyId = String(surveyId);
     const aggregatesColl = db.collection('aggregates');
     let aggDoc: any = null;
-    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e) { /* ignore */ }
+    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e: any) { /* ignore */ }
     const modules = await computeAggregates(key, aggDoc);
     const mod = modules['leadership'] || { questionScores: [], summaryMetrics: {} };
     return res.json({ ok: true, analytics: mod });
@@ -606,7 +709,7 @@ app.get('/api/analytics/employee-experience', async (req, res) => {
     if (surveyId) key.surveyId = String(surveyId);
     const aggregatesColl = db.collection('aggregates');
     let aggDoc: any = null;
-    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e) { /* ignore */ }
+    try { if (Object.keys(key).length > 0) aggDoc = await aggregatesColl.findOne(key as any); } catch (e: any) { /* ignore */ }
     const modules = await computeAggregates(key, aggDoc);
     const mod = modules['employee-experience'] || { questionScores: [], summaryMetrics: {} };
     return res.json({ ok: true, analytics: mod });
@@ -707,6 +810,35 @@ async function start() {
   } catch (idxErr) {
     console.warn('Failed to ensure DB indexes:', idxErr);
   }
+  // Redis removed: no cross-process pub/sub here
+
+  // If MongoDB is available, attempt to open a change stream on the responses collection to forward inserts
+  try {
+    if (!useInMemoryDb && db && typeof db.collection === 'function') {
+      try {
+        const coll = db.collection('responses');
+        mongoChangeStream = coll.watch([], { fullDocument: 'updateLookup' });
+        mongoChangeStream.on('change', (change: any) => {
+          try {
+            const doc = change.fullDocument || null;
+            const payload = { type: change.operationType, doc: doc ? { _id: doc._id, companyId: doc.companyId, surveyId: doc.surveyId, createdAt: doc.createdAt } : null };
+            // Publish change events to SSE clients
+            publishEvent('response:changed', payload);
+          } catch (e: any) { console.warn('Error processing change stream event', e); }
+        });
+        mongoChangeStream.on('error', (err: any) => {
+          console.warn('Mongo change stream error — disabling change stream', err && err.message);
+          try { mongoChangeStream.close(); } catch (e: any) { }
+          mongoChangeStream = null;
+        });
+        console.log('Mongo change stream established for responses collection');
+      } catch (e: any) {
+        console.warn('Could not open change stream (likely single-node Mongo). SSE will still work via app publish.');
+      }
+    }
+  } catch (e: any) {
+    console.warn('Failed to initialize change stream', e);
+  }
   // Kafka disabled — no producer/consumer will be started in this build
   if (process.env.NODE_ENV !== 'test') {
     server.listen(PORT, () => console.log(`SSE + Mongo server listening on ${PORT}`));
@@ -721,7 +853,7 @@ start().catch((err) => {
 // graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Shutting down...');
-  try { await mongoClient?.close(); } catch (e) {}
+  try { await mongoClient?.close(); } catch (e: any) {}
   server.close(() => process.exit(0));
 });
 

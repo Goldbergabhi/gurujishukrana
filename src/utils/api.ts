@@ -21,12 +21,18 @@ async function fetchAPI<T>(
   options: RequestInit = {}
 ): Promise<T> {
   try {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    } as Record<string, string>;
+    // attach bearer token if configured
+    if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
+
     const response = await fetch(url, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      // send credentials so HTTP-only auth cookies are included in same-origin/dev setups
+      credentials: 'include',
+      headers,
     });
 
     if (!response.ok) {
@@ -45,6 +51,13 @@ async function fetchAPI<T>(
     console.error('API Request failed:', error);
     throw new Error('Network error - please check your connection');
   }
+}
+
+// Simple auth token helper: store a bearer token to be sent on subsequent requests.
+// Call `setAuthToken(token)` from your login flow (dev token or real auth).
+let _authToken: string | null = null;
+export function setAuthToken(token: string | null) {
+  _authToken = token;
 }
 
 // ============================================

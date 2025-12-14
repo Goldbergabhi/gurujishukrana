@@ -2,7 +2,7 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { TrendingUp, TrendingDown, Users, Target, Clock, Award } from "lucide-react";
-export function ModuleSnapshot({ module, campaign, surveyResponses, mockData }) {
+export function ModuleSnapshot({ module, campaign, surveyResponses, mockData, serverSummary }) {
     const moduleData = useMemo(() => {
         // Calculate module-specific metrics
         const getModuleResponses = (prefix) => Object.keys(surveyResponses).filter(key => key.startsWith(prefix)).length;

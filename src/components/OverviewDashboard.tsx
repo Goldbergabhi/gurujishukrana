@@ -28,10 +28,11 @@ interface OverviewDashboardProps {
   mockData: any;
   backendAggregates?: any | null;
   companyId?: string | null;
+  isAdmin?: boolean;
   availableModules?: ('ai-readiness' | 'leadership' | 'employee-experience')[];
 }
 
-export function OverviewDashboard({ overallAverages, surveyResponses, mockData, backendAggregates = null, companyId = null, availableModules = ['ai-readiness', 'leadership', 'employee-experience'] }: OverviewDashboardProps) {
+export function OverviewDashboard({ overallAverages, surveyResponses, mockData, backendAggregates = null, companyId = null, isAdmin = false, availableModules = ['ai-readiness', 'leadership', 'employee-experience'] }: OverviewDashboardProps) {
   // Trend data: prefer server-side monthly buckets where available, otherwise use mock data
   const trendData = useMemo(() => {
     if (backendAggregates) {
@@ -341,10 +342,12 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
             </Card>
           </div>
 
-          {/* Personal Responses (per-question + module averages) */}
-          <div className="mt-6">
-            <MyResponsesResults surveyResponses={surveyResponses} module="all" />
-          </div>
+          {/* Personal Responses (per-question + module averages) - only visible to admin users */}
+          {isAdmin ? (
+            <div className="mt-6">
+              <MyResponsesResults surveyResponses={surveyResponses} module="all" />
+            </div>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="results" className="space-y-6">

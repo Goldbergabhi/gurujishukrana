@@ -10,7 +10,6 @@ const { randomUUID } = require('crypto');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
-const IORedis = require('ioredis');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -24,7 +23,7 @@ const MAX_NESTING_DEPTH = Number(process.env.MAX_NESTING_DEPTH) || 3;
 const RESPONSES_RATE_LIMIT_WINDOW_MS = Number(process.env.RESPONSES_RATE_LIMIT_WINDOW_MS) || 60 * 1000; // 1 minute
 const RESPONSES_RATE_LIMIT_MAX = Number(process.env.RESPONSES_RATE_LIMIT_MAX) || 120; // max requests per window per IP
 
-// per-tenant rate limiting (uses Redis when available, falls back to in-memory)
+// per-tenant rate limiting (in-memory fallback)
 const TENANT_RATE_LIMIT_WINDOW_MS = Number(process.env.TENANT_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
 const TENANT_RATE_LIMIT_MAX = Number(process.env.TENANT_RATE_LIMIT_MAX) || 1000;
 
@@ -409,14 +408,7 @@ async function tenantRateLimiter(req, res, next) {
   try {
     const tenantId = req.tenant && req.tenant.companyId ? String(req.tenant.companyId) : (req.body && req.body.companyId ? String(req.body.companyId) : null);
     if (!tenantId) return res.status(400).json({ error: 'missing tenant/companyId' });
-    // If Redis available use it for accurate counts
-    if (redisPub) {
-      const key = `rl:${tenantId}:${Math.floor(Date.now() / TENANT_RATE_LIMIT_WINDOW_MS)}`;
-      const v = await redisPub.incr(key);
-      if (v === 1) await redisPub.pexpire(key, TENANT_RATE_LIMIT_WINDOW_MS);
-      if (v > TENANT_RATE_LIMIT_MAX) return res.status(429).json({ error: 'tenant rate limit exceeded' });
-      return next();
-    }
+    // (Redis removed) use in-memory per-tenant counters for rate limiting
     // fallback in-memory per-tenant counters
     const storeKey = `tenant_rl__${tenantId}`;
     if (!inMemoryStore.has(storeKey)) inMemoryStore.set(storeKey, { count: 0, windowStart: Date.now() });
@@ -472,7 +464,7 @@ app.post('/api/responses', responsesLimiter, verifyTokenMiddleware, tenantRateLi
     // Publish to SSE clients only if Mongo change stream is NOT active.
     // When a replica-set is in use we rely on MongoDB change streams to drive realtime events
     // to avoid duplicate notifications. If change-stream is unavailable we keep in-process publish.
-    if (!mongoChangeStream && !redisPub) {
+    if (!mongoChangeStream) {
       const payload = { surveyId: saved.surveyId, companyId: saved.companyId, timestamp: saved.createdAt, summary: { submitted: 1 } };
       const text = `event: response:created\n` + `data: ${JSON.stringify(payload)}\n\n`;
       sseClients.forEach((meta, clientRes) => {
@@ -482,14 +474,7 @@ app.post('/api/responses', responsesLimiter, verifyTokenMiddleware, tenantRateLi
         catch (e) { /* ignore write errors per-client */ }
       });
     }
-    // Publish to Redis so other instances can forward the event (best-effort)
-    if (redisPub) {
-      try {
-        const payload = { type: 'insert', companyId: saved.companyId, surveyId: saved.surveyId, doc: { _id: saved._id, createdAt: saved.createdAt } };
-        redisPub.publish('responses', JSON.stringify(payload));
-      }
-      catch (e) { logger('warn', 'Failed to publish response to Redis', e && e.message); }
-    }
+    // Redis removed — cross-instance forwarding not performed here (use SSE or external pubsub)
 
     // If Mongo change stream is active it will publish changes to SSE clients;
     // otherwise we publish directly above to in-process SSE clients.
@@ -508,44 +493,8 @@ const server = http.createServer(app);
 let dbClient = null;
 let db = null;
 let mongoChangeStream = null;
-let redisPub = null;
-let redisSub = null;
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
-async function tryConnectRedis() {
-  try {
-    redisPub = new IORedis(REDIS_URL);
-    redisSub = new IORedis(REDIS_URL);
-    // attach safe error handlers to avoid uncaught AggregateError logging
-    redisPub.on('error', (err) => { logger('warn', 'redisPub error', err && err.message); });
-    redisSub.on('error', (err) => { logger('warn', 'redisSub error', err && err.message); });
-    // subscribe to responses channel
-    await redisSub.subscribe('responses');
-    redisSub.on('message', (channel, message) => {
-      if (channel !== 'responses') return;
-      try {
-        const payload = JSON.parse(message);
-        // forward to SSE clients filtered by tenant
-        sseClients.forEach((meta, clientRes) => {
-          try {
-            if (meta && meta.companyId && payload.companyId && String(meta.companyId) === String(payload.companyId)) {
-              const text = `event: response:changed\n` + `data: ${JSON.stringify(payload)}\n\n`;
-              clientRes.write(text);
-            }
-          }
-          catch (e) { }
-        });
-      }
-      catch (e) { logger('warn', 'Invalid redis message', e && e.message); }
-    });
-    logger('info', 'Connected to Redis for pub/sub');
-  }
-  catch (e) {
-    logger('warn', 'Could not connect to Redis; continuing without Redis pub/sub', e && e.message);
-    redisPub = null; redisSub = null;
-  }
-}
+// Redis pub/sub removed from legacy server; SSE + Mongo change-streams handle notifications.
 
 async function tryConnectMongo() {
   const uri = process.env.MONGODB_URI;
@@ -564,16 +513,13 @@ async function tryConnectMongo() {
       mongoChangeStream = coll.watch([], { fullDocument: 'updateLookup' });
       mongoChangeStream.on('change', (change) => {
         try {
-            const doc = change.fullDocument || null;
-            const payload = { type: change.operationType, doc: doc ? { _id: doc._id, companyId: doc.companyId, surveyId: doc.surveyId, createdAt: doc.createdAt } : null };
-            // If Redis is available we rely on the application write path to publish events
-            // to Redis (avoids duplicate messages). If Redis isn't available, forward events directly.
-            if (!redisPub) {
+              const doc = change.fullDocument || null;
+              const payload = { type: change.operationType, doc: doc ? { _id: doc._id, companyId: doc.companyId, surveyId: doc.surveyId, createdAt: doc.createdAt } : null };
+              // Forward change-stream events to SSE clients
               const text = `event: response:changed\n` + `data: ${JSON.stringify(payload)}\n\n`;
               sseClients.forEach((meta, clientRes) => {
                 try { clientRes.write(text); } catch (e) { }
               });
-            }
         }
         catch (e) { logger('warn', 'Error processing change stream event', e); }
       });
@@ -597,7 +543,6 @@ async function tryConnectMongo() {
 }
 
 tryConnectMongo();
-tryConnectRedis();
 
 // Dev helper: simple login endpoint that returns a signed JWT for a tenant/companyId
 app.post('/api/login', express.json(), (req, res) => {
@@ -648,8 +593,6 @@ function shutdown() {
     // close Mongo change stream and client if present
     try { if (mongoChangeStream) { mongoChangeStream.close(); mongoChangeStream = null; } } catch (e) { }
     try { if (dbClient) { dbClient.close().catch(() => {}); dbClient = null; db = null; } } catch (e) { }
-    try { if (redisSub) { redisSub.quit().catch(()=>{}); redisSub = null; } } catch (e) { }
-    try { if (redisPub) { redisPub.quit().catch(()=>{}); redisPub = null; } } catch (e) { }
     server.close(() => {
       process.exit(0);
     });

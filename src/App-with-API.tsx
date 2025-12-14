@@ -7,7 +7,7 @@ import { toast } from "sonner@2.0.3";
 import { Sidebar } from "./components/Sidebar";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ModuleSurveyTab } from "./components/ModuleSurveyTab";
-import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab";
+import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab.tsx";
 import { ModularSurvey } from "./components/ModularSurvey";
 import { PostSurveyDashboard } from "./components/PostSurveyDashboard";
 import { SurveyManagement } from "./components/SurveyManagement";

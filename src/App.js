@@ -4,7 +4,7 @@ import { Toaster } from "./components/ui/sonner";
 import { Sidebar } from "./components/Sidebar";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ModuleSurveyTab } from "./components/ModuleSurveyTab";
-import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab";
+import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab.tsx";
 import { EmployeeExperienceSection } from "./components/EmployeeExperienceSection";
 import { ModularSurvey } from "./components/ModularSurvey";
 import { PostSurveyDashboard } from "./components/PostSurveyDashboard";
@@ -289,7 +289,7 @@ export default function App() {
                         {activeModule === 'overview' && (
                             <>
                                 <WelcomeBanner currentSurvey={currentSurvey} isAdmin={urlParams.isAdmin} availableModules={availableModules} />
-                                <OverviewDashboard overallAverages={usedOverallAverages} surveyResponses={surveyResponses} mockData={filteredData} availableModules={availableModules} />
+                                <OverviewDashboard overallAverages={usedOverallAverages} surveyResponses={surveyResponses} mockData={filteredData} availableModules={availableModules} isAdmin={urlParams.isAdmin} />
                             </>
                         )}
 
@@ -327,7 +327,7 @@ export default function App() {
                                                 }}
                                                 questionScores={aiBackend.questionScores}
                                                 sectionData={aiBackend.sectionData}
-                                                surveyResponses={surveyResponses}
+                                                surveyResponses={urlParams.isAdmin ? surveyResponses : undefined}
                                                 moduleId="ai-readiness"
                                             />
                                         )}
@@ -363,7 +363,7 @@ export default function App() {
                                                 }}
                                                 questionScores={eeBackend.questionScores}
                                                 sectionData={eeBackend.sectionData}
-                                                surveyResponses={surveyResponses}
+                                                surveyResponses={urlParams.isAdmin ? surveyResponses : undefined}
                                                 moduleId="employee-experience"
                                             />
                                         )}

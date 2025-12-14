@@ -11,8 +11,7 @@ services:
         value: "3000"
       - key: MONGODB_URI
         scope: RUN_AND_BUILD_TIME
-      - key: REDIS_URL
-        scope: RUN_AND_BUILD_TIME
+      # REDIS_URL removed — not used by this service
       - key: JWT_SECRET
         scope: RUN_AND_BUILD_TIME
     http_port: 3000

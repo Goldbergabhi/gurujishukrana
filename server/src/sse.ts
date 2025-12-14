@@ -8,6 +8,31 @@ type SSEClient = {
 };
 
 const sseClients = new Map<string, SSEClient[]>();
+let ssePingInterval: NodeJS.Timeout | null = null;
+
+function startSsePing() {
+  if (ssePingInterval) return;
+  ssePingInterval = setInterval(() => {
+    sseClients.forEach((list) => {
+      list.forEach((client) => {
+        try {
+          client.res.write(': ping\n\n');
+        } catch (e: any) {
+          // ignore per-client write errors
+        }
+      });
+    });
+  }, 20000);
+}
+
+function stopSsePingIfIdle() {
+  let any = false;
+  sseClients.forEach((list) => { if (list && list.length > 0) any = true; });
+  if (!any && ssePingInterval) {
+    clearInterval(ssePingInterval);
+    ssePingInterval = null;
+  }
+}
 
 export function subscribeSSE(req: express.Request, res: express.Response) {
   const token = (req.query.token as string) || (req.headers.authorization && String(req.headers.authorization).startsWith('Bearer ') ? String(req.headers.authorization).split(' ')[1] : undefined);
@@ -38,12 +63,15 @@ export function subscribeSSE(req: express.Request, res: express.Response) {
   const arr = sseClients.get(key) || [];
   arr.push(client);
   sseClients.set(key, arr);
+  // start keepalive pings
+  startSsePing();
 
   res.write(':connected\n\n');
 
   req.on('close', () => {
     const list = sseClients.get(key) || [];
     sseClients.set(key, list.filter((c) => c.id !== id));
+    stopSsePingIfIdle();
   });
 }
 
@@ -55,7 +83,7 @@ export function publishEvent(event: string, data: any) {
     try {
       if (client.surveyId && data.surveyId && String(client.surveyId) !== String(data.surveyId)) return;
       client.res.write(text);
-    } catch (err) {
+    } catch (err: any) {
       // ignore
     }
   });

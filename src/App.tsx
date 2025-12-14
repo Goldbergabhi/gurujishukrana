@@ -6,7 +6,7 @@ import { Toaster } from "./components/ui/sonner";
 import { Sidebar } from "./components/Sidebar";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ModuleSurveyTab } from "./components/ModuleSurveyTab";
-import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab";
+import { ModuleAnalysisTab } from "./components/ModuleAnalysisTab.tsx";
 import { EmployeeExperienceSection } from "./components/EmployeeExperienceSection";
 import { ModularSurvey } from "./components/ModularSurvey";
 import { PostSurveyDashboard } from "./components/PostSurveyDashboard";
@@ -550,6 +550,7 @@ export default function App() {
                 mockData={filteredData}
                 backendAggregates={apiAggregates}
                 companyId={urlParams.company}
+                isAdmin={urlParams.isAdmin}
                 availableModules={availableModules}
               />
             </>
@@ -615,7 +616,7 @@ export default function App() {
                         score: section.positivePercentage,
                         questionCount: section.totalCount
                       }))}
-                        surveyResponses={surveyResponses}
+                        surveyResponses={urlParams.isAdmin ? surveyResponses : undefined}
                         moduleId={'ai-readiness'}
                         backendAggregates={apiAggregates}
                     />
@@ -640,7 +641,7 @@ export default function App() {
                         score: lens.positivePercentage,
                         questionCount: lens.totalCount
                       }))}
-                      surveyResponses={surveyResponses}
+                      surveyResponses={urlParams.isAdmin ? surveyResponses : undefined}
                       moduleId={'leadership'}
                       backendAggregates={apiAggregates}
                     />
@@ -666,7 +667,7 @@ export default function App() {
                           score: category.positivePercentage,
                           questionCount: category.totalCount
                         }))}
-                        surveyResponses={surveyResponses}
+                        surveyResponses={urlParams.isAdmin ? surveyResponses : undefined}
                         moduleId={'employee-experience'}
                         backendAggregates={apiAggregates}
                       />
@@ -681,7 +682,7 @@ export default function App() {
                           driverData={employeeByDriver}
                           overallPercentage={overallAverages.employeeExperience}
                           distribution={employeeDistribution}
-                          surveyResponses={surveyResponses}
+                          surveyResponses={urlParams.isAdmin ? surveyResponses : undefined}
                             moduleId={'employee-experience'}
                             backendAggregates={apiAggregates}
                         />
