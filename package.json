@@ -53,10 +53,13 @@
       "devDependencies": {
             "@types/node": "^24.10.1",
             "@vitejs/plugin-react": "^4.0.0",
+            "concurrently": "^8.2.2",
             "vite": "^5.4.21"
       },
       "scripts": {
             "dev": "vite",
-            "build": "vite build"
+            "build": "vite build",
+            "dev:backend": "cd server && ENABLE_DEV_TOKEN=true NODE_ENV=development npm run start:dev",
+            "dev:all": "concurrently \"npm:dev:backend\" \"npm:dev\""
       }
 }

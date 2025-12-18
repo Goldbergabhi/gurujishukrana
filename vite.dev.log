@@ -1,0 +1,100 @@
+nohup: ignoring input
+
+> LEAP Survey Dashboard@0.1.0 dev
+> vite
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+Vite proxy target: http://localhost:4001 (healthy: true)
+Port 3000 is in use, trying another one...
+Port 3001 is in use, trying another one...
+Port 3002 is in use, trying another one...
+
+  VITE v5.4.21  ready in 250 ms
+
+  ➜  Local:   http://127.0.0.1:3003/
+7:44:56 PM [vite] hmr update /src/App.tsx, /src/components/OverviewDashboard.js
+7:44:56 PM [vite] Pre-transform error: Transform failed with 1 error:
+/workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10: ERROR: Expected ")" but found "as"
+7:44:56 PM [vite] Pre-transform error: Transform failed with 1 error:
+/workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10: ERROR: Expected ")" but found "as"
+7:44:57 PM [vite] Internal server error: Transform failed with 1 error:
+/workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10: ERROR: Expected ")" but found "as"
+  Plugin: vite:esbuild
+  File: /workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10
+  
+  Expected ")" but found "as"
+  118|          es.addEventListener('message', (m: MessageEvent) => {
+  119|            try { console.debug && console.debug('[useSSE] message', { data: m.data }); } catch (e) {}
+  120|          } as EventListener);
+     |            ^
+  121|        } catch (e) {}
+  122|        es.addEventListener('open', onOpen as EventListener);
+  
+      at failureErrorWithLog (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:1472:15)
+      at /workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+7:48:25 PM [vite] hmr update /src/App.tsx, /src/components/OverviewDashboard.js
+7:48:25 PM [vite] vite.config.ts changed, restarting server...
+7:48:25 PM [vite] hmr update /src/components/OverviewDashboard.js
+Vite proxy target: http://localhost:4001 (healthy: true)
+7:48:25 PM [vite] server restarted.
+7:48:26 PM [vite] Pre-transform error: Transform failed with 1 error:
+/workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10: ERROR: Expected ")" but found "as"
+7:48:27 PM [vite] Pre-transform error: Transform failed with 1 error:
+/workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10: ERROR: Expected ")" but found "as"
+7:48:27 PM [vite] Internal server error: Transform failed with 1 error:
+/workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10: ERROR: Expected ")" but found "as"
+  Plugin: vite:esbuild
+  File: /workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10
+  
+  Expected ")" but found "as"
+  118|          es.addEventListener('message', (m: MessageEvent) => {
+  119|            try { console.debug && console.debug('[useSSE] message', { data: m.data }); } catch (e) {}
+  120|          } as EventListener);
+     |            ^
+  121|        } catch (e) {}
+  122|        es.addEventListener('open', onOpen as EventListener);
+  
+      at failureErrorWithLog (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:1472:15)
+      at /workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+7:48:36 PM [vite] Internal server error: Transform failed with 1 error:
+/workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10: ERROR: Expected ")" but found "as"
+  Plugin: vite:esbuild
+  File: /workspaces/gurujishukrana/src/hooks/useSSE.ts:120:10
+  
+  Expected ")" but found "as"
+  118|          es.addEventListener('message', (m: MessageEvent) => {
+  119|            try { console.debug && console.debug('[useSSE] message', { data: m.data }); } catch (e) {}
+  120|          } as EventListener);
+     |            ^
+  121|        } catch (e) {}
+  122|        es.addEventListener('open', onOpen as EventListener);
+  
+      at failureErrorWithLog (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:1472:15)
+      at /workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/workspaces/gurujishukrana/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+8:00:58 PM [vite] hmr update /src/components/OverviewDashboard.js, /src/App.tsx
+8:01:33 PM [vite] hmr update /src/components/OverviewDashboard.js, /src/App.tsx
+8:12:59 PM [vite] hmr update /src/components/OverviewDashboard.js, /src/App.tsx

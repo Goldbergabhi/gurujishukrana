@@ -1,4 +1,5 @@
-import { useMemo, useEffect, useState } from 'react';
+import { useMemo, useEffect, useState, useRef } from 'react';
+import useSSE from '../hooks/useSSE';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Badge } from "./ui/badge";
@@ -31,67 +32,63 @@ interface OverviewDashboardProps {
   availableModules?: ('ai-readiness' | 'leadership' | 'employee-experience')[];
 }
 export function OverviewDashboard({ overallAverages, surveyResponses, backendAggregates = null, companyId = null, isAdmin = false, availableModules = ['ai-readiness', 'leadership', 'employee-experience'] }: OverviewDashboardProps) {
-  // Trend data: prefer server-side monthly buckets where available, otherwise use mock data
+  const [localAggregates, setLocalAggregates] = useState<any | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const sourceAggregates = backendAggregates ?? localAggregates;
+
+  // Trend data: prefer server-side monthly buckets where available
   const trendData = useMemo(() => {
-    if (backendAggregates) {
-      try {
-        // If backend provides a timeSeries field, use it. Otherwise build a simple trend from responseCount
-        const months = ['Jan','Feb','Mar','Apr','May','Jun'];
-        const totalResponses = Object.keys(backendAggregates).reduce((s, k) => s + (backendAggregates[k]?.summaryMetrics?.responseCount || 0), 0);
-        const perMonth = Math.max(1, Math.round(totalResponses / months.length));
-        return months.map((m, i) => ({
-          month: m,
-          responses: Math.round(perMonth * (1 + (Math.sin(i) * 0.15))),
-          aiReadiness: backendAggregates['ai-readiness']?.summaryMetrics?.positiveAverage || overallAverages.aiReadiness,
-          leadership: backendAggregates['leadership']?.summaryMetrics?.positiveAverage || overallAverages.leadership,
-          employeeExp: backendAggregates['employee-experience']?.summaryMetrics?.positiveAverage || overallAverages.employeeExperience
-        }));
-      } catch (e) {
-        // fall back to mock below
+    if (!sourceAggregates) return [];
+    try {
+      if (sourceAggregates.timeSeries && Array.isArray(sourceAggregates.timeSeries)) {
+        return sourceAggregates.timeSeries;
       }
+      // If backend provides module summaries, synthesize a simple trend placeholder from responseCount distribution
+      const months = ['Jan','Feb','Mar','Apr','May','Jun'];
+      const totalResponses = Object.keys(sourceAggregates).reduce((s, k) => s + (sourceAggregates[k]?.summaryMetrics?.responseCount || 0), 0);
+      const perMonth = Math.max(0, Math.round(totalResponses / months.length));
+      return months.map((m, i) => ({
+        month: m,
+        responses: Math.round(perMonth * (1 + (Math.sin(i) * 0.15))),
+        aiReadiness: sourceAggregates['ai-readiness']?.summaryMetrics?.positiveAverage ?? overallAverages.aiReadiness,
+        leadership: sourceAggregates['leadership']?.summaryMetrics?.positiveAverage ?? overallAverages.leadership,
+        employeeExp: sourceAggregates['employee-experience']?.summaryMetrics?.positiveAverage ?? overallAverages.employeeExperience
+      }));
+    } catch (e) {
+      return [];
     }
-    // no server trend data
-    return [];
-  }, [backendAggregates, overallAverages]);
+  }, [sourceAggregates, overallAverages]);
 
   // Demographic distribution: prefer server-provided demographics for the selected company/survey
   const demographicData = useMemo(() => {
-    if (backendAggregates) {
-      try {
-        // Look for any module demographics (employee-experience preferred)
-        const preferred = backendAggregates['employee-experience'] || backendAggregates['leadership'] || backendAggregates['ai-readiness'];
-        if (preferred && Array.isArray(preferred.demographics) && preferred.demographics.length > 0) {
-          return preferred.demographics.slice(0,5).map((d: any, i: number) => ({ name: d.group || d.key || `Group ${i+1}`, value: d.count || d.value || 0, color: ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6'][i % 5] }));
-        }
-      } catch (e) {}
-    }
-    // no server demographics
+    if (!sourceAggregates) return [];
+    try {
+      const preferred = sourceAggregates['employee-experience'] || sourceAggregates['leadership'] || sourceAggregates['ai-readiness'];
+      if (preferred && Array.isArray(preferred.demographics) && preferred.demographics.length > 0) {
+        return preferred.demographics.slice(0,5).map((d: any, i: number) => ({ name: d.group || d.key || `Group ${i+1}`, value: d.count || d.value || 0, color: ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6'][i % 5] }));
+      }
+    } catch (e) {}
     return [];
-  }, [backendAggregates]);
+  }, [sourceAggregates]);
 
   const totalParticipants = useMemo(() => {
-    if (backendAggregates) {
-      try {
-        const keys = Object.keys(backendAggregates || {});
-        const sum = keys.reduce((s, k) => s + ((backendAggregates[k]?.summaryMetrics?.responseCount) || 0), 0);
-        // If sum is 0, return null so UI shows placeholder
-        return sum || null;
-      } catch (e) {
-        return null;
-      }
-    }
-    return null;
-  }, [backendAggregates]);
+    if (!sourceAggregates) return null;
+    try {
+      const keys = Object.keys(sourceAggregates || {});
+      const sum = keys.reduce((s, k) => s + ((sourceAggregates[k]?.summaryMetrics?.responseCount) || 0), 0);
+      return sum || null;
+    } catch (e) { return null; }
+  }, [sourceAggregates]);
 
   const initialCompletedSurveys = useMemo(() => {
-    if (backendAggregates) {
-      try {
-        const keys = Object.keys(backendAggregates || {});
-        return keys.reduce((s, k) => s + ((backendAggregates[k]?.summaryMetrics?.responseCount) || 0), 0) || null;
-      } catch (e) { return null; }
-    }
-    return null;
-  }, [backendAggregates]);
+    if (!sourceAggregates) return null;
+    try {
+      const keys = Object.keys(sourceAggregates || {});
+      return keys.reduce((s, k) => s + ((sourceAggregates[k]?.summaryMetrics?.responseCount) || 0), 0) || null;
+    } catch (e) { return null; }
+  }, [sourceAggregates]);
 
   const initialActiveRespondents = useMemo(() => {
     // we don't track active respondents server-side currently; return null when unknown
@@ -101,6 +98,13 @@ export function OverviewDashboard({ overallAverages, surveyResponses, backendAgg
   const [liveCompletedSurveys, setLiveCompletedSurveys] = useState(initialCompletedSurveys);
   const [liveActiveRespondents, setLiveActiveRespondents] = useState(initialActiveRespondents);
   const [lastEventTime, setLastEventTime] = useState(null);
+  // SSE connection status + retry
+  const [sseStatus, setSseStatus] = useState<'idle' | 'connecting' | 'connected' | 'failed'>('idle');
+  const [sseRetryCount, setSseRetryCount] = useState(0);
+  const sseMaxRetries = 6;
+  const sseReconnectRef = useRef<number | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+  const [sseManualTrigger, setSseManualTrigger] = useState(0);
 
   const responseRate = (typeof totalParticipants === 'number' && typeof liveCompletedSurveys === 'number' && totalParticipants > 0)
     ? Math.round((liveCompletedSurveys / totalParticipants) * 100)
@@ -117,87 +121,150 @@ export function OverviewDashboard({ overallAverages, surveyResponses, backendAgg
 
   useEffect(() => {
     // initialize live counters from backend aggregates when available
-    if (backendAggregates) {
+    if (sourceAggregates) {
       setLiveCompletedSurveys(initialCompletedSurveys);
       setLiveActiveRespondents(initialActiveRespondents);
     }
+  }, [sourceAggregates, initialCompletedSurveys, initialActiveRespondents]);
 
-    let es: EventSource | null = null;
+  const fetchTimerRef = useRef<number | null>(null);
+
+  const fetchAggregates = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      es = new EventSource('/sse');
-    } catch (err) {
-      console.error('EventSource not supported or failed to connect', err);
-      return;
+      const qs = companyId ? `?companyId=${encodeURIComponent(String(companyId))}` : '';
+      const res = await fetch(`/api/aggregates${qs}`);
+      if (!res.ok) throw new Error(`Aggregates fetch failed: ${res.status}`);
+      const json = await res.json();
+      setLocalAggregates(json.aggregates || null);
+    } catch (err: any) {
+      setError(err?.message || String(err));
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const onConnected = (e: MessageEvent) => {
-      // connected event - we could parse client id if needed
-      // console.log('SSE connected', e.data);
+  const scheduleFetchAggregates = () => {
+    try { if (fetchTimerRef.current) window.clearTimeout(fetchTimerRef.current); } catch (e) {}
+    fetchTimerRef.current = window.setTimeout(() => { fetchAggregates(); }, 800) as unknown as number;
+  };
+
+  // If we don't have backendAggregates passed from parent, fetch once and keep live-updating
+  useEffect(() => {
+    if (!backendAggregates) {
+      fetchAggregates().catch(() => {});
+    }
+    return () => {
+      try { if (fetchTimerRef.current) window.clearTimeout(fetchTimerRef.current); } catch (e) {}
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendAggregates, companyId]);
 
-    const onResponse = (e: MessageEvent) => {
+  const { reconnect } = useSSE({
+    companyId,
+    onEvent: (e: MessageEvent) => {
+      try { console.debug && console.debug('[OverviewDashboard] SSE event', { data: e.data }); } catch (err) {}
       try {
         const data = JSON.parse(e.data);
-        // data: { surveyId, module, count, timestamp }
-        // Increment completed surveys by 1 (a submission), and active respondents by 1
-        // Only increment if the incoming event matches this company/survey when provided
         const matchesCompany = !companyId || data.companyId === companyId;
         if (matchesCompany) {
-          setLiveCompletedSurveys(prev => prev + 1);
-          setLiveActiveRespondents(prev => prev + 1);
+          setLiveCompletedSurveys(prev => (prev ?? 0) + 1);
+          setLiveActiveRespondents(prev => (prev ?? 0) + 1);
         }
         setLastEventTime(new Date(data.timestamp || Date.now()).toLocaleTimeString());
       } catch (err) {
-        console.error('Malformed SSE response event', err);
+        console.error('Malformed SSE event', err);
       }
-    };
-
-    es.addEventListener('connected', onConnected as EventListener);
-    es.addEventListener('response', onResponse as EventListener);
-    es.onerror = (err) => {
-      console.warn('SSE error', err);
-      // try to reconnect is handled automatically by EventSource
-    };
-
-    return () => {
-      if (es) {
-        es.close();
-      }
-    };
-  }, []);
-
-  // Top performing / attention questions derived from server aggregates when available
-  const topQuestions = useMemo(() => {
-    if (!backendAggregates) return [];
-    try {
-      // gather questionScores across modules and sort by positivePercentage/average
-      const list: Array<{ text: string; score: number; module: string }> = [];
-      Object.keys(backendAggregates).forEach((mod) => {
-        const qlist = backendAggregates[mod]?.questionScores || [];
-        qlist.forEach((q: any) => {
-          list.push({ text: q.question || q.questionId || q.id || q.label || q.name || q.questionText || 'Question', score: Math.round(q.positivePercentage || q.average || 0), module: mod });
+      // refresh full aggregates (debounced)
+      scheduleFetchAggregates();
+    },
+    onStatus: (status: any, detail?: string) => {
+      try { console.debug && console.debug('[OverviewDashboard] SSE status', { status, detail, retry: sseRetryCount }); } catch (err) {}
+      if (status === 'connecting') {
+        setSseStatus('connecting');
+      } else if (status === 'connected') {
+        setSseStatus('connected');
+        setSseRetryCount(0);
+      } else if (status === 'unavailable' || status === 'error') {
+        setSseStatus('connecting');
+        setSseRetryCount(prev => {
+          const next = prev + 1;
+          if (next > sseMaxRetries) setSseStatus('failed');
+          return next;
         });
-      });
-      return list.sort((a, b) => b.score - a.score).slice(0, 4);
-    } catch (e) { return []; }
-  }, [backendAggregates]);
+      } else if (status === 'closed') {
+        setSseStatus('failed');
+      }
+    }
+  });
 
   const attentionQuestions = useMemo(() => {
-    if (!backendAggregates) return [];
+    if (!sourceAggregates) return [];
     try {
       const list: Array<{ text: string; score: number; module: string }> = [];
-      Object.keys(backendAggregates).forEach((mod) => {
-        const qlist = backendAggregates[mod]?.questionScores || [];
+      Object.keys(sourceAggregates).forEach((mod) => {
+        const qlist = sourceAggregates[mod]?.questionScores || [];
         qlist.forEach((q: any) => {
           list.push({ text: q.question || q.questionId || q.id || q.label || q.name || q.questionText || 'Question', score: Math.round(q.positivePercentage || q.average || 0), module: mod });
         });
       });
       return list.sort((a, b) => a.score - b.score).slice(0, 3);
     } catch (e) { return []; }
-  }, [backendAggregates]);
+  }, [sourceAggregates]);
+
+  const topQuestions = useMemo(() => {
+    if (!sourceAggregates) return [];
+    try {
+      const list: Array<{ text: string; score: number; module: string }> = [];
+      Object.keys(sourceAggregates).forEach((mod) => {
+        const qlist = sourceAggregates[mod]?.questionScores || [];
+        qlist.forEach((q: any) => {
+          const score = typeof q.positivePercentage === 'number' ? Math.round(q.positivePercentage) : (typeof q.average === 'number' ? Math.round((q.average || 0) * 10) / 10 : 0);
+          list.push({ text: q.question || q.questionId || q.id || q.label || q.name || q.questionText || 'Question', score, module: mod });
+        });
+      });
+      return list.sort((a, b) => b.score - a.score).slice(0, 4);
+    } catch (e) { return []; }
+  }, [sourceAggregates]);
 
   return (
     <div className="space-y-6">
+      {/* SSE connection status banner */}
+      {sseStatus === 'connecting' && (
+        <div className="p-2 bg-yellow-50 text-sm text-yellow-800 rounded">
+          Live updates: connecting... (attempt {sseRetryCount}/{sseMaxRetries})
+        </div>
+      )}
+      {sseStatus === 'failed' && (
+        <div className="p-3 bg-red-50 text-sm text-red-800 rounded flex items-center justify-between">
+          <div>Live updates unavailable. You can retry to re-establish a connection.</div>
+          <div>
+            <button
+              className="ml-4 px-3 py-1 bg-red-600 text-white rounded"
+              onClick={() => {
+                try { if (sseReconnectRef.current) window.clearTimeout(sseReconnectRef.current); } catch (e) {}
+                setSseRetryCount(0);
+                setSseStatus('connecting');
+                    try { console.debug && console.debug('[OverviewDashboard] manual reconnect'); reconnect(); } catch (e) { console.warn('Reconnect failed', e); }
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
+      {loading && (
+        <div className="p-2 bg-blue-50 text-sm text-blue-800 rounded">Loading dashboard data…</div>
+      )}
+      {error && (
+        <div className="p-3 bg-red-50 text-sm text-red-800 rounded flex items-center justify-between">
+          <div>Failed to load dashboard data: {error}</div>
+          <div>
+            <button className="ml-4 px-3 py-1 bg-red-600 text-white rounded" onClick={() => fetchAggregates().catch(() => {})}>Retry</button>
+          </div>
+        </div>
+      )}
       <Tabs defaultValue="responses" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="responses">My Responses</TabsTrigger>
@@ -315,133 +382,9 @@ export function OverviewDashboard({ overallAverages, surveyResponses, backendAgg
                           dataKey="value"
                         >
                           {demographicData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
+                            <Cell fill={entry.color} key={`cell-${index}`} />
                           ))}
                         </Pie>
-                        <Tooltip formatter={(value) => [`${value}%`, 'Participation']} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="p-6 text-sm text-gray-600">Waiting for server demographics for this company.</div>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2 mt-4 justify-center">
-                  {demographicData.map((item) => (
-                    <Badge key={item.name} variant="outline" className="text-xs">
-                      <div 
-                        className="w-2 h-2 rounded-full mr-1" 
-                        style={{ backgroundColor: item.color }}
-                      />
-                      {item.name}
-                    </Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Personal Responses (per-question + module averages) - only visible to admin users */}
-          {isAdmin ? (
-            <div className="mt-6">
-              <MyResponsesResults surveyResponses={surveyResponses} module="all" />
-            </div>
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="results" className="space-y-6">
-          {/* Live Module Scores - filtered by available modules */}
-          <div className={`grid grid-cols-1 gap-4 ${
-            availableModules.length === 1 ? 'md:grid-cols-1' :
-            availableModules.length === 2 ? 'md:grid-cols-2' :
-            'md:grid-cols-3'
-          }`}>
-            {availableModules.includes('ai-readiness') && (
-              <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-blue-800">AI Readiness</CardTitle>
-                  <div className="flex items-center gap-1">
-                    <TrendingUp className="h-4 w-4 text-green-600" />
-                    <span className="text-xs text-green-600">+2.3%</span>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-blue-900">
-                    {overallAverages.aiReadiness.toFixed(1)}%
-                  </div>
-                  <p className="text-xs text-blue-700 mt-1">Positive responses (4-5 on 5-point scale)</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {availableModules.includes('leadership') && (
-              <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-green-800">Leadership</CardTitle>
-                  <div className="flex items-center gap-1">
-                    <TrendingUp className="h-4 w-4 text-green-600" />
-                    <span className="text-xs text-green-600">+1.8%</span>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-green-900">
-                    {overallAverages.leadership.toFixed(1)}%
-                  </div>
-                  <p className="text-xs text-green-700 mt-1">Positive responses (4-5 on 5-point scale)</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {availableModules.includes('employee-experience') && (
-              <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium text-purple-800">Employee Experience</CardTitle>
-                  <div className="flex items-center gap-1">
-                    <TrendingDown className="h-4 w-4 text-red-600" />
-                    <span className="text-xs text-red-600">-0.5%</span>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-purple-900">
-                    {overallAverages.employeeExperience.toFixed(1)}%
-                  </div>
-                  <p className="text-xs text-purple-700 mt-1">Favorable ratings (7-10 on 10-point scale)</p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-
-          {/* Overall LEAP Score */}
-          <Card className="bg-gradient-to-r from-gray-50 to-blue-50 border-blue-200">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-xl">Overall LEAP Score</CardTitle>
-                  <CardDescription>
-                    Combined performance across {availableModules.length} module{availableModules.length > 1 ? 's' : ''}: {
-                      availableModules.map(module => 
-                        module === 'ai-readiness' ? 'AI Readiness' :
-                        module === 'leadership' ? 'Leadership' :
-                        'Employee Experience'
-                      ).join(', ')
-                    }
-                  </CardDescription>
-                </div>
-                <Award className="h-8 w-8 text-yellow-600" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-4">
-                <div className="text-4xl font-bold text-gray-900">{overallScore}%</div>
-                <div className="flex-1">
-                  <Progress value={overallScore} className="h-3" />
-                  <p className="text-sm text-gray-600 mt-1">
-                    {overallScore >= 80 ? 'Excellent performance' : 
-                     overallScore >= 70 ? 'Good performance' : 
-                     overallScore >= 60 ? 'Satisfactory performance' : 'Needs improvement'}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
           </Card>
 
           {/* Question Performance Review */}

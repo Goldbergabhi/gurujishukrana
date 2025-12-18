@@ -3,6 +3,8 @@ import http from 'http';
 import bodyParser from 'body-parser';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { MongoClient, Db } from 'mongodb';
 // Kafka producer/consumer are optional for local dev. Provide safe stubs
@@ -12,13 +14,49 @@ let produceResponseEvent: (companyId: string, surveyId: string, saved: any) => P
 let startConsumer: () => Promise<void> = async () => { return; };
 // Kafka removed: no runtime producer/consumer in this build (calls are no-ops)
 import { subscribeSSE, publishEvent } from './sse';
+// per-route rate limits
+const responseLimiter = rateLimit({ windowMs: 60 * 1000, max: Number(process.env.RESPONSES_PER_MINUTE || '60') });
 
 dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
-// Allow cross-origin requests in development; tighten this in production
-app.use(cors());
+// In dev, behind Vite proxy, trust the proxy headers so rate-limit can use X-Forwarded-* safely
+if (process.env.NODE_ENV === 'development') {
+  app.set('trust proxy', true);
+}
+// Security: apply helmet and guarded CORS. ALLOWED_ORIGINS can be a comma-separated list.
+app.use(helmet());
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : [];
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.error('JWT_SECRET is required in production');
+  process.exit(1);
+}
+
+if (process.env.NODE_ENV === 'production' && ALLOWED_ORIGINS.length === 0) {
+  console.error('ALLOWED_ORIGINS must be set in production to restrict CORS');
+  process.exit(1);
+}
+
+if (process.env.NODE_ENV === 'development') {
+  app.use(cors());
+} else {
+  app.use(cors({
+    origin: (origin, callback) => {
+      // allow non-browser tools with no origin header only when explicitly configured
+      if (!origin) return callback(null, false);
+      if (ALLOWED_ORIGINS.length === 0) return callback(new Error('CORS not configured'), false);
+      return ALLOWED_ORIGINS.includes(origin) ? callback(null, true) : callback(new Error('Not allowed by CORS'), false);
+    }
+  }));
+}
+
+// Basic rate limiting (skip /sse to avoid interfering with long-lived connections)
+const generalLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 1000 }); // 1000 requests per 10 minutes
+app.use((req, res, next) => {
+  if (req.path === '/sse') return next();
+  return generalLimiter(req as any, res as any, next as any);
+});
 
 const server = http.createServer(app);
 
@@ -159,8 +197,10 @@ function jwtAuthRequired(req: express.Request, res: express.Response, next: expr
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ error: 'Authorization header required' });
   const token = authHeader.split(' ')[1];
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return res.status(500).json({ error: 'Server misconfigured: JWT_SECRET not set' });
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') as any;
+    const payload = jwt.verify(token, secret) as any;
     (req as any).auth = payload;
     return next();
   } catch (err) {
@@ -181,6 +221,7 @@ app.get('/sse', subscribeSSE);
 
 // Debug endpoint (development only) - report whether connected to MongoDB and collection counts
 app.get('/api/debug/db', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'debug endpoint disabled in production' });
   try {
     const info: any = { useInMemoryDb, dbName: MONGODB_DB };
     if (!useInMemoryDb && db) {
@@ -237,7 +278,7 @@ app.get('/api/debug/collections', async (req, res) => {
 });
 
 // API: submit a survey response
-app.post('/api/responses', async (req, res) => {
+app.post('/api/responses', responseLimiter, async (req, res) => {
   try {
     // Support multiple request shapes for backward compatibility:
     // 1) { companyId, surveyId, respondentId, answers }
@@ -400,12 +441,14 @@ app.post('/api/responses', async (req, res) => {
 
 // Development helper: issue a short-lived dev JWT for a company (only when not in production)
 app.get('/api/dev-token', (req, res) => {
-  if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'dev token endpoint disabled in production' });
+  if (process.env.NODE_ENV === 'production' || process.env.ENABLE_DEV_TOKEN !== 'true') return res.status(403).json({ error: 'dev token endpoint disabled' });
   const { companyId, isAdmin } = req.query;
   if (!companyId) return res.status(400).json({ error: 'companyId query parameter required' });
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return res.status(500).json({ error: 'Server misconfigured: JWT_SECRET not set' });
   try {
     const payload = { companyId: String(companyId), isAdmin: String(isAdmin) === 'true' };
-    const token = jwt.sign(payload, process.env.JWT_SECRET || 'dev_secret', { expiresIn: '7d' });
+    const token = jwt.sign(payload, secret, { expiresIn: '7d' });
     return res.json({ ok: true, token });
   } catch (err: any) {
     console.error('Failed to create dev token', err);
@@ -788,7 +831,7 @@ app.delete('/api/campaigns/:id', async (req, res) => {
   }
 });
 
-const PORT = Number(process.env.PORT || 4000);
+const PORT = Number(process.env.PORT || 4001);
 
 async function start() {
   await connectMongo();
@@ -841,7 +884,53 @@ async function start() {
   }
   // Kafka disabled — no producer/consumer will be started in this build
   if (process.env.NODE_ENV !== 'test') {
-    server.listen(PORT, () => console.log(`SSE + Mongo server listening on ${PORT}`));
+    // Attempt to bind to PORT, but if already in use try subsequent ports
+    const startPort = PORT;
+    const maxAttempts = 10;
+    let boundPort: number | null = null;
+    for (let i = 0; i < maxAttempts; i++) {
+      const tryPort = startPort + i;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise<void>((resolve, reject) => {
+          const onError = (err: any) => {
+            server.removeListener('listening', onListen);
+            if (err && (err as any).code === 'EADDRINUSE') return reject(err);
+            return reject(err);
+          };
+          const onListen = () => {
+            server.removeListener('error', onError);
+            return resolve();
+          };
+          server.once('error', onError);
+          server.once('listening', onListen);
+          server.listen(tryPort);
+        });
+        boundPort = tryPort;
+        break;
+      } catch (err: any) {
+        if (err && err.code === 'EADDRINUSE') {
+          console.warn(`Port ${tryPort} in use, trying next port`);
+          // continue loop
+          continue;
+        }
+        console.error('Failed to bind server', err);
+        process.exit(1);
+      }
+    }
+    if (!boundPort) {
+      console.error(`Could not bind to a port in range ${startPort}-${startPort + maxAttempts - 1}`);
+      process.exit(1);
+    }
+    console.log(`SSE + Mongo server listening on ${boundPort}`);
+    // Write dev port file for dev tooling to pick up (optional)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const fs = require('fs');
+      fs.writeFileSync('.dev_backend_port', String(boundPort), 'utf8');
+    } catch (e) {
+      // ignore
+    }
   }
 }
 

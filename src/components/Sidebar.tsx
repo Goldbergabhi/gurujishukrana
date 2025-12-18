@@ -21,6 +21,7 @@ interface SidebarProps {
   };
   isAdmin?: boolean;
   availableModules?: string[];
+  hideOverview?: boolean;
 }
 
 const getStatusIcon = (status: string) => {
@@ -51,6 +52,7 @@ export function Sidebar({
   surveyStatus, 
   isAdmin = false, 
   availableModules = ['ai-readiness', 'leadership', 'employee-experience'] 
+  , hideOverview = false
 }: SidebarProps) {
   
   const allNavigationItems = [
@@ -98,13 +100,16 @@ export function Sidebar({
   ];
 
   // Filter navigation items based on available modules
-  const navigationItems = allNavigationItems.filter(item => {
-    if (item.alwaysShow) return true;
-    if (item.requiresModule) {
-      return availableModules.includes(item.requiresModule);
-    }
-    return true;
-  });
+  const navigationItems = allNavigationItems
+    .filter(item => {
+      // allow caller to hide the overview item when embedding a second sidebar
+      if (hideOverview && item.id === 'overview') return false;
+      if (item.alwaysShow) return true;
+      if (item.requiresModule) {
+        return availableModules.includes(item.requiresModule);
+      }
+      return true;
+    });
 
   return (
     <div className="w-64 bg-white border-r border-gray-200 h-full flex flex-col">

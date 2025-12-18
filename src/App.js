@@ -12,6 +12,7 @@ import { SurveyManagement } from "./components/SurveyManagement";
 import { WelcomeBanner } from "./components/WelcomeBanner";
 // Mock data removed — frontend relies on backend aggregates for real-time data
 import { parseUrlParams, getSurveyConfig, filterDataBySurvey } from "./utils/surveyManagement";
+import useSSE from './hooks/useSSE';
 import { aiReadinessQuestions, leadershipQuestions, employeeExperienceQuestions } from './utils/surveyData';
 import { calculateOverallAverages, calculateAIReadinessBySection, calculateLeadershipByLens, calculateLeadershipByConfiguration, calculateLeadershipByDriver, calculateEmployeeExperienceByCategory, calculateEmployeeExperienceByDriver, getEmployeeExperienceDistribution } from "./utils/calculations";
 export default function App() {
@@ -153,35 +154,16 @@ export default function App() {
     };
     // SSE listener: refresh aggregates on response events so dashboards update in real-time
     useEffect(() => {
-        let es;
-        try {
-            es = new EventSource('/sse');
-        }
-        catch (err) {
-            console.warn('SSE not available', err);
-            return;
-        }
-        const onResponse = (e) => {
-            try {
-                try {
-                    const parsed = e.data ? JSON.parse(e.data) : null;
-                    console.debug('SSE event received:', e.type, parsed);
-                }
-                catch (parseErr) {
-                    console.debug('SSE event received (no JSON payload)', e.type);
-                }
-                // Refresh aggregates from backend
-                fetchAggregates().catch(err => console.warn('Failed to fetch aggregates on SSE', err));
-            }
-            catch (err) {
-                console.error('Failed to handle SSE event', err);
-            }
-        };
-        es.addEventListener('response', onResponse);
-        es.addEventListener('response:created', onResponse);
-        es.onerror = (err) => console.warn('SSE error', err);
-        return () => es && es.close();
+        // initial fetch
+        fetchAggregates().catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [urlParams.surveyId]);
+
+    useSSE({
+        onEvent: () => {
+            fetchAggregates().catch(err => console.warn('Failed to fetch aggregates on SSE', err));
+        }
+    });
 
 
     async function fetchAggregates() {

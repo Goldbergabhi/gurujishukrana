@@ -1,0 +1,16 @@
+MONGODB_URI= [REDACTED]   MONGODB_DB= leap-survey
+Could not connect to MongoDB, falling back to in-memory DB for dev: connect ECONNREFUSED ::1:27017, connect ECONNREFUSED 127.0.0.1:27017
+Starting embedded MongoDB (mongodb-memory-server) for local development...
+Starting the MongoMemoryServer Instance failed, enable debug log for more information. Error:
+ UnexpectedCloseError: Instance closed unexpectedly with code "1" and signal "null"
+    at MongoInstance.closeHandler (/workspaces/gurujishukrana/server/node_modules/mongodb-memory-server-core/lib/util/MongoInstance.js:290:58)
+    at ChildProcess.emit (node:events:508:28)
+    at maybeClose (node:internal/child_process:1101:16)
+    at Socket.<anonymous> (node:internal/child_process:457:11)
+    at Socket.emit (node:events:508:28)
+    at Pipe.<anonymous> (node:net:346:12)
+mongodb-memory-server not available; using lightweight in-memory store (not persisted)
+Skipping DB index creation: using in-memory fallback
+Port 4001 in use, trying next port
+Port 4002 in use, trying next port
+SSE + Mongo server listening on 4003

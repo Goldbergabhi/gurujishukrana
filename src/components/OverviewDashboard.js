@@ -1,5 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useMemo, useEffect, useState } from 'react';
+import useSSE from '../hooks/useSSE';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Badge } from "./ui/badge";
@@ -43,44 +44,25 @@ export function OverviewDashboard({ overallAverages, surveyResponses, mockData, 
             moduleScores.push(overallAverages.employeeExperience);
         return moduleScores.length > 0 ? Math.round(moduleScores.reduce((sum, score) => sum + score, 0) / moduleScores.length) : 0;
     }, [overallAverages, availableModules]);
-    useEffect(() => {
-        let es = null;
+    // Use centralized SSE hook to avoid multiple EventSource connections
+    const sseHandler = (e) => {
         try {
-            es = new EventSource('/sse');
+            const data = JSON.parse(e.data);
+            setLiveCompletedSurveys(prev => prev + 1);
+            setLiveActiveRespondents(prev => prev + 1);
+            setLastEventTime(new Date(data.timestamp || Date.now()).toLocaleTimeString());
         }
         catch (err) {
-            console.error('EventSource not supported or failed to connect', err);
-            return;
+            console.error('Malformed SSE response event', err);
         }
-        const onConnected = (e) => {
-            // connected event - we could parse client id if needed
-            // console.log('SSE connected', e.data);
-        };
-        const onResponse = (e) => {
-            try {
-                const data = JSON.parse(e.data);
-                // data: { surveyId, module, count, timestamp }
-                // Increment completed surveys by 1 (a submission), and active respondents by 1
-                setLiveCompletedSurveys(prev => prev + 1);
-                setLiveActiveRespondents(prev => prev + 1);
-                setLastEventTime(new Date(data.timestamp || Date.now()).toLocaleTimeString());
-            }
-            catch (err) {
-                console.error('Malformed SSE response event', err);
-            }
-        };
-        es.addEventListener('connected', onConnected);
-        es.addEventListener('response', onResponse);
-        es.onerror = (err) => {
-            console.warn('SSE error', err);
-            // try to reconnect is handled automatically by EventSource
-        };
-        return () => {
-            if (es) {
-                es.close();
-            }
-        };
-    }, []);
+    };
+
+    const sseStatus = (status, detail) => {
+        if (status === 'error') console.warn('SSE status:', detail);
+    };
+
+    // call the hook (only once per component instance)
+    useSSE({ companyId: null, surveyId: null, onEvent: sseHandler, onStatus: sseStatus });
     // Top performing questions (mock data)
     const topQuestions = [
         { text: "Team collaboration effectiveness", score: 85, module: "Leadership" },

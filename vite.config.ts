@@ -1,8 +1,35 @@
 import { defineConfig } from 'vite'
 import path from 'path'
+import fs from 'fs'
 
 export default defineConfig(async () => {
   const { default: react } = await import('@vitejs/plugin-react')
+
+  // Determine backend target synchronously (read .dev_backend_port if present)
+  let backendBase = process.env.VITE_API_BASE_URL || 'http://localhost:4001';
+  try {
+    const p = fs.readFileSync('.dev_backend_port', 'utf8').trim();
+    const port = Number.parseInt(p, 10);
+    if (Number.isFinite(port) && port > 0 && port < 65536) {
+      backendBase = `http://localhost:${port}`;
+    } else {
+      console.warn('.dev_backend_port invalid, falling back to', backendBase);
+    }
+  } catch (e) {
+    // file missing — continue with default
+  }
+
+  // Check backend health before wiring proxy to reduce ECONNREFUSED flood
+  let backendHealthy = false;
+  try {
+    // simple health probe using fetch; node 18+ has global fetch
+    const probe = await (globalThis as any).fetch?.(`${backendBase.replace(/\/$/, '')}/health`, { method: 'GET', cache: 'no-store' , redirect: 'manual'});
+    if (probe && probe.ok) backendHealthy = true;
+  } catch (e) {
+    backendHealthy = false;
+  }
+
+  console.log(`Vite proxy target: ${backendBase} (healthy: ${backendHealthy})`);
 
   return {
     base: './',
@@ -56,19 +83,52 @@ export default defineConfig(async () => {
       outDir: 'build',
     },
     server: {
+      host: '127.0.0.1',
       port: 3000,
       open: true,
       proxy: {
         '/api': {
-          target: 'http://localhost:4000',
+          target: backendBase,
           changeOrigin: true,
           secure: false,
+          configure: (proxy, options) => {
+            // throttle logging to avoid log spam during backend down
+            let lastLog = 0;
+            proxy.on('error', (err: any, req: any, res: any) => {
+              const now = Date.now();
+              if (now - lastLog > 5000) {
+                console.error(`Vite proxy error forwarding ${req.url} -> ${backendBase}:`, err && err.message ? err.message : err);
+                lastLog = now;
+              }
+              try {
+                if (res && !res.headersSent) {
+                  res.writeHead ? res.writeHead(502) : null;
+                  res.end && res.end('Backend unavailable');
+                }
+              } catch (e) {}
+            });
+          }
         },
         '/sse': {
-          target: 'http://localhost:4000',
+          target: backendBase,
           changeOrigin: true,
           secure: false,
-          ws: false,
+          configure: (proxy, options) => {
+            let lastLog = 0;
+            proxy.on('error', (err: any, req: any, res: any) => {
+              const now = Date.now();
+              if (now - lastLog > 5000) {
+                console.error(`Vite proxy WS error ${req.url} -> ${backendBase}:`, err && err.message ? err.message : err);
+                lastLog = now;
+              }
+              try {
+                if (res && !res.headersSent) {
+                  res.writeHead ? res.writeHead(502) : null;
+                  res.end && res.end('Backend unavailable');
+                }
+              } catch (e) {}
+            });
+          }
         }
       }
     },

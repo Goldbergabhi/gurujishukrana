@@ -23,7 +23,7 @@ export const MONGODB_CONFIG = {
 
 // API Base URL - Your backend server
 // Default API base points to the local backend port used by the dev server
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4001/api';
 
 // API Endpoints
 export const API_ENDPOINTS = {

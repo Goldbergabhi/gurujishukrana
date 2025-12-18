@@ -76,6 +76,7 @@ export default function App() {
   // Fetch aggregates from API when a surveyId is present so dashboards reflect persisted data
   const [apiAggregates, setApiAggregates] = useState<any | null>(null);
   const [apiLoading, setApiLoading] = useState(false);
+  const [sseStatus, setSseStatus] = useState<string | null>(null);
   const [campaignInfo, setCampaignInfo] = useState<any | null>(null);
   useEffect(() => {
     let mounted = true;
@@ -288,6 +289,11 @@ export default function App() {
         console.warn('Failed to refresh aggregates on SSE', err);
       }
     }
+    ,
+    onStatus: (status, detail) => {
+      if (status === 'connected') setSseStatus(null);
+      else setSseStatus(status + (detail ? `: ${detail}` : ''));
+    }
   });
 
   const handleModuleChange = (module: string) => {
@@ -406,6 +412,7 @@ export default function App() {
                 surveyStatus={surveyStatus}
                 isAdmin={urlParams.isAdmin}
                 availableModules={availableModules}
+                hideOverview={true}
               />
             </div>
           </div>
@@ -490,6 +497,9 @@ export default function App() {
               {/* Global View removed */}
             </div>
           </div>
+          {sseStatus && (
+            <div className="mt-2 text-sm text-red-700">Live updates: {sseStatus}</div>
+          )}
         </div>
 
         {/* Content Area */}

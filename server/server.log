@@ -1,64 +1,25 @@
 nohup: ignoring input
-[INFO] 20:11:25 ts-node-dev ver. 2.0.0 (using ts-node ver. 10.9.2, typescript ver. 5.9.3)
-Could not connect to MongoDB, falling back to in-memory DB for dev: C03CFD373D710000:error:0A000438:SSL routines:ssl3_read_bytes:tlsv1 alert internal error:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:916:SSL alert number 80
-
+MONGODB_URI= [REDACTED]   MONGODB_DB= leap-survey
+Could not connect to MongoDB, falling back to in-memory DB for dev: connect ECONNREFUSED ::1:27017, connect ECONNREFUSED 127.0.0.1:27017
 Starting embedded MongoDB (mongodb-memory-server) for local development...
 Starting the MongoMemoryServer Instance failed, enable debug log for more information. Error:
  UnexpectedCloseError: Instance closed unexpectedly with code "1" and signal "null"
-    at MongoInstance.closeHandler (/workspaces/GuruJi/server/node_modules/mongodb-memory-server-core/src/util/MongoInstance.ts:546:52)
-    at ChildProcess.emit (node:events:519:28)
+    at MongoInstance.closeHandler (/workspaces/gurujishukrana/server/node_modules/mongodb-memory-server-core/lib/util/MongoInstance.js:290:58)
+    at ChildProcess.emit (node:events:508:28)
     at maybeClose (node:internal/child_process:1101:16)
-    at Socket.<anonymous> (node:internal/child_process:456:11)
-    at Socket.emit (node:events:519:28)
-    at Pipe.<anonymous> (node:net:346:12)
-mongodb-memory-server not available; using lightweight in-memory store (not persisted)
-Skipping DB index creation: using in-memory fa[INFO] 20:51:47 Restar[INFO] 20:51:47 Restarting: /workspaces/GuruJi/server/src/indexError: Cannot find modError: Cannot find module '/workspaces/GuruJi/server/src/sse' imported from /workspaces/GuruJi/server/src/index.ts
-    at finalizeResolution (node:internal/modules/esm/resolve:274:11)
-    at moduleResolve (node:internal/modules/esm/resolve:859:10)
-    at defaultResolve (node:internal/modules/esm/resolve:983:11)
-    at ModuleLoader.#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
-    at ModuleLoader.#resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:767:38)
-    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:790:52)
-    at ModuleLoader.#cachedResolveSync (node:internal/modules/esm/loader:750:25)
-    at ModuleLoader.getModuleJobForRequire (nodCould not connect to MongoDB, falling back to in-memory DB for dev: C0BC335514780000:error:0A000438:SSL routines:ssl3_read_bytes:tlsv1 alert internal error:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:916:SSL alert number 80
-
-Starting embedded MongoDB (mongodb-memory-server) for local development[INFO] 20:53:11 Restar[INFO] 20:53:11 Restarting: /workspaces/GuruJi/server/src/indexError: Cannot find modError: Cannot find module '/workspaces/GuruJi/server/src/sse' imported from /workspaces/GuruJi/server/src/index.ts
-    at finalizeResolution (node:internal/modules/esm/resolve:274:11)
-    at moduleResolve (node:internal/modules/esm/resolve:859:10)
-    at defaultResolve (node:internal/modules/esm/resolve:983:11)
-    at ModuleLoader.#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
-    at ModuleLoader.#resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:767:38)
-    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:790:52)
-    at ModuleLoader.#cachedResolveSync (node:internal/modules/esm/loader:750:25)
-    at ModuleLoader.getModuleJobForRequire (node:internal/modules/esm/loader:459:50)
-    at new ModuleJobSync (node:internal/modules/esm/module_job:392:34)
-    at ModuleLoader.importSyncForRequire (node:internal/modules/esm/loader:432:11)
-[ERROR] 20:53:13 Error: Cannot find module '/workspaces/GuruJi/server/src/sse' imported from /workspaces/GuruJi/server/src/index.ts
-i/server/node_modules/express/lib/router/route.js:119:3)
-    at Layer.handle [as handle_request] (/workspaces/GuruJi/server/node_modules/express/lib/router/layer.js:95:5)
-    at /workspaces/GuruJi/server/node_modules/express/lib/router/index.js:284:15
-    at Function.process_params (/workspaces/GuruJi/server/node_modules/express/lib/router/index.js:346:12)
-    at next (/workspaces/GuruJi/server/node_modules/express/lib/router/index.js:280:10)
-    at cors (/workspaces/GuruJi/server/node_modules/cors/lib/index.js:188:7)
-    at /workspaces/GuruJi/server/node_modules/cors/lib/index.js:224:17
-[INFO] 20:53:11 Restarting: /workspaces/GuruJi/server/src/index.ts has been modified
-Could not connect to MongoDB, falling back to in-memory DB for dev: C03C9C3B18710000:error:0A000438:SSL routines:ssl3_read_bytes:tlsv1 alert internal error:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:916:SSL alert number 80
-
-Starting embedded MongoDB (mongodb-memory-server) for local development...
-Starting the MongoMemoryServer Instance failed, enable debug log for more information. Error:
- UnexpectedCloseError: Instance closed unexpectedly with code "1" and signal "null"
-    at MongoInstance.closeHandler (/workspaces/GuruJi/server/node_modules/mongodb-memory-server-core/src/util/MongoInstance.ts:546:52)
-    at ChildProcess.emit (node:events:519:28)
-    at maybeClose (node:internal/child_process:1101:16)
-    at Socket.<anonymous> (node:internal/child_process:456:11)
-    at Socket.emit (node:events:519:28)
+    at Socket.<anonymous> (node:internal/child_process:457:11)
+    at Socket.emit (node:events:508:28)
     at Pipe.<anonymous> (node:net:346:12)
 mongodb-memory-server not available; using lightweight in-memory store (not persisted)
 Skipping DB index creation: using in-memory fallback
-SSE + Mongo server listening on 4000
-could not update aggregates materialized store TypeError: aggregates.updateOne is not a function
-    at /workspaces/GuruJi/server/src/index.ts:163:24
-    at processTicksAndRejections (node:internal/process/task_queues:105:5)
-could not update aggregates materialized store TypeError: aggregates.updateOne is not a function
-    at /workspaces/GuruJi/server/src/index.ts:163:24
-    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+SSE + Mongo server listening on 4001
+ValidationError: The Express 'trust proxy' setting is true, which allows anyone to trivially bypass IP-based rate limiting. See https://express-rate-limit.github.io/ERR_ERL_PERMISSIVE_TRUST_PROXY/ for more information.
+    at Object.trustProxy (/workspaces/gurujishukrana/server/node_modules/express-rate-limit/dist/index.cjs:348:13)
+    at wrappedValidations.<computed> [as trustProxy] (/workspaces/gurujishukrana/server/node_modules/express-rate-limit/dist/index.cjs:680:22)
+    at Object.keyGenerator (/workspaces/gurujishukrana/server/node_modules/express-rate-limit/dist/index.cjs:782:20)
+    at /workspaces/gurujishukrana/server/node_modules/express-rate-limit/dist/index.cjs:844:32
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async /workspaces/gurujishukrana/server/node_modules/express-rate-limit/dist/index.cjs:825:5 {
+  code: 'ERR_ERL_PERMISSIVE_TRUST_PROXY',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_PERMISSIVE_TRUST_PROXY/'
+}

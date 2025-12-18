@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import useSSE from '../hooks/useSSE';
 
 function useDebounced(fn: (...args: any[]) => void, ms = 800) {
   const t = useRef<number | null>(null);
@@ -27,54 +28,28 @@ export default function DashboardRealtime({ companyId, surveyId }: { companyId: 
   const debouncedFetch = useDebounced(fetchAgg, 800);
 
   useEffect(() => {
-    // obtain a short-lived token for this tenant (dev helper)
-    (async () => {
-      try {
-        // request login and let server set HTTP-only cookie (credentials included)
-        await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId }), credentials: 'include' });
-        // open EventSource without token; cookie will be sent when same-origin or proxied
-        const es = new EventSource(`/sse`);
-        es.onopen = () => setConnected(true);
-        es.onerror = (err) => { console.warn('SSE error', err); setConnected(false); };
-
-        const onResponseCreated = (ev: MessageEvent) => {
-          try {
-            const payload = JSON.parse(ev.data);
-            if (payload && payload.surveyId === surveyId && payload.companyId === companyId) {
-              debouncedFetch();
-            }
-          } catch (e) {
-            debouncedFetch();
-          }
-        };
-
-        const onResponseChanged = (ev: MessageEvent) => {
-          debouncedFetch();
-        };
-
-        es.addEventListener('response:created', onResponseCreated as EventListener);
-        es.addEventListener('response:changed', onResponseChanged as EventListener);
-
-        // cleanup
-        (window as any).__dashboard_es = es;
-        (window as any).__dashboard_onResponseCreated = onResponseCreated;
-        (window as any).__dashboard_onResponseChanged = onResponseChanged;
-      } catch (e) {
-        console.error('login+SSE failed', e);
-      }
-    })();
     // initial load will be triggered after login
     fetchAgg();
-
-    return () => {
-      const es = (window as any).__dashboard_es;
-      const onResp = (window as any).__dashboard_onResponseCreated;
-      const onChanged = (window as any).__dashboard_onResponseChanged;
-      if (es && onResp) es.removeEventListener('response:created', onResp as EventListener);
-      if (es && onChanged) es.removeEventListener('response:changed', onChanged as EventListener);
-      if (es) es.close();
-    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, surveyId]);
+
+  useSSE({
+    companyId,
+    surveyId,
+    onEvent: (ev: MessageEvent) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        if (payload && payload.surveyId === surveyId && payload.companyId === companyId) {
+          debouncedFetch();
+        }
+      } catch (e) {
+        debouncedFetch();
+      }
+    },
+    onStatus: (status) => {
+      setConnected(status === 'connected');
+    }
+  });
 
   return (
     <div>

@@ -130,7 +130,9 @@ export function ModularSurvey({ onComplete, specificModule }: ModularSurveyProps
 
       // Request a dev token (only available in non-production)
       const devRoot = API_BASE_URL.replace(/\/api$/, '');
-      const tokRes = await fetch(`${devRoot}/api/dev-token?companyId=${encodeURIComponent(companyId)}`);
+      const IS_PROD = (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.PROD) ? true : false;
+      const tokUrl = IS_PROD ? `${devRoot}/api/dev-token?companyId=${encodeURIComponent(companyId)}` : `/api/dev-token?companyId=${encodeURIComponent(companyId)}`;
+      const tokRes = await fetch(tokUrl);
       if (!tokRes.ok) {
         console.warn('dev-token fetch failed', await tokRes.text());
       }
